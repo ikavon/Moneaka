@@ -1,0 +1,29 @@
+[project]
+name = "moneaka"
+version = "0.0.1"
+description = "Monika-voice polisher: turn any generic LLM's draft into Monika's way of speaking."
+requires-python = ">=3.12"
+dependencies = [
+    "transformers",
+    "accelerate",
+    "peft",
+    "datasets",
+    "bitsandbytes",
+    "sentence-transformers",
+    "openai",
+    "pyyaml",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+moneaka = "moneaka.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

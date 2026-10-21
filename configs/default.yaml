@@ -1,0 +1,23 @@
+# 所有端点都走 OpenAI 兼容协议。值支持 `env:VAR` 与 `env:VAR:兜底`。
+# 模型选谁由用户定：DeepSeek / 通义 / OpenAI 官方 / 自建网关都行。
+
+endpoints:
+  strong:
+    base_url: env:MONEAKA_BASE_URL:https://api.openai.com/v1
+    api_key: env:MONEAKA_API_KEY
+    model: env:MONEAKA_STRONG_MODEL:gpt-4o-mini
+    max_tokens: 400
+
+  # 本地小模型（llama.cpp server / LM Studio / Ollama 的 /v1 均可）
+  local:
+    base_url: env:MONEAKA_LOCAL_BASE_URL:http://localhost:1234/v1
+    api_key: env:MONEAKA_LOCAL_API_KEY:EMPTY
+    model: env:MONEAKA_LOCAL_MODEL:Qwen3-1.7B
+    temperature: 0.9
+    max_tokens: 300
+
+# 角色 → 端点。阶段 0 的设定：造草稿和打分用强模型，润色用被测的小模型。
+roles:
+  destyle: strong
+  judge: strong
+  restyle: local
