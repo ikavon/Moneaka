@@ -54,7 +54,7 @@ class LocalModel:
     """一个已加载的本地因果语言模型。"""
 
     def __init__(self, model_id: str, dtype: str = "auto", device: str = "auto",
-                 load_in_4bit: bool = False):
+                 load_in_4bit: bool = False, adapter: str | None = None):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -76,6 +76,11 @@ class LocalModel:
         else:
             kwargs["dtype"] = torch.bfloat16 if dtype == "auto" else getattr(torch, dtype)
         self.model = AutoModelForCausalLM.from_pretrained(self.path, **kwargs).eval()
+        if adapter:
+            # 训好的 LoRA 叠在基座上，merge 后推理——评测与以后部署走同一条路径
+            from peft import PeftModel
+            self.model = PeftModel.from_pretrained(self.model, adapter)
+            self.model = self.model.merge_and_unload().eval()
         self.device = next(self.model.parameters()).device
 
     # -- 生成 --------------------------------------------------------------
@@ -123,8 +128,9 @@ class LocalModel:
 
 
 def get_model(model_id: str, **kwargs) -> LocalModel:
-    """进程内单例：同一 (model_id, 量化设置) 只加载一次。"""
-    key = (model_id, f"{kwargs.get('load_in_4bit', False)}-{kwargs.get('dtype', 'auto')}")
+    """进程内单例：同一 (model_id, 量化设置, adapter) 只加载一次。"""
+    key = (model_id, f"{kwargs.get('load_in_4bit', False)}-{kwargs.get('dtype', 'auto')}"
+                    f"-{kwargs.get('adapter')}")
     with _LOCK:
         if key not in _MODEL_CACHE:
             _MODEL_CACHE[key] = LocalModel(model_id, **kwargs)

@@ -29,14 +29,18 @@ class FakeLLM:
     def complete(self, profile, system, user, **kw):
         self.calls.append(profile)
         if profile == "destyle":
-            # 去风格化：抹掉标签与语气词，保留内容
+            # 去风格化：输出「语气: 反应次序 / 内容: 平实陈述」两行
             from moneaka.contract import TAG_RE
-            return TAG_RE.sub("", user.replace("原文:", "")).replace("嘿嘿", "").strip()
+            body = TAG_RE.sub("", user.replace("原稿:", "")).replace("嘿嘿", "").strip()
+            return "先答应; 再提议一起去躲雨\n内容: 当然愿意，下雨时我们可以挨在一起。"
         if profile == "restyle":
             return "[微笑]当然愿意了, 那我们一起去躲雨吧."
         if profile == "judge":
+            # 盲评风格只要「编号,分」两列；语义评委要「编号,语义分,风格分」三列。
             idents = re.findall(r"^#(\d+)$", user, re.M)
-            return "\n".join(f"{i},4,4" for i in idents)
+            if "说话方式" in system:
+                return _join(f"{i},4" for i in idents)
+            return _join(f"{i},4,3" for i in idents)
         return ""
 
     def chat(self, profile, messages, **kw):
@@ -192,7 +196,7 @@ def test_judge_sample_is_deterministic_and_scoped():
 
         def complete(self, profile, system, user, **kw):
             if profile == "judge":
-                self.judged += user.count("草稿:")
+                self.judged += len(re.findall(r"^#(\d+)$", user, re.M))
             return super().complete(profile, system, user, **kw)
 
     rows = [{"turn_id": f"t{i}", "draft": f"草稿{i}", "polish": "[微笑]好.",
@@ -200,7 +204,7 @@ def test_judge_sample_is_deterministic_and_scoped():
     a, b = CountingLLM(), CountingLLM()
     score_arm(a, rows, "polish", batch_size=5, sample=6)
     score_arm(b, rows, "polish", batch_size=5, sample=6)
-    assert a.judged == 6 and b.judged == 6          # 只判 6 条
+    assert a.judged == 12 and b.judged == 12          # 只判 6 条：风格 6 + 语义 6
     assert all(s.contract_ok for s in score_arm(FakeLLM(), rows, "polish", judge=False))
 
 

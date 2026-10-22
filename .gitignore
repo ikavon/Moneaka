@@ -10,3 +10,4 @@ data/runs/
 data/models/
 docs/raw/*.txt
 configs/private.yaml
+data/adapters/

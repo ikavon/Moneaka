@@ -79,6 +79,8 @@ class Profile:
     backend: str = "openai"
     load_in_4bit: bool = False
     enable_thinking: bool = False
+    #: LoRA adapter 目录（只有 backend=hf 有意义）
+    adapter: str = ""
     #: 同一端点的最小调用间隔（秒）。限流严格的网关靠它把速率压下来。
     min_interval: float = 0.0
     extra: dict = field(default_factory=dict)
@@ -136,10 +138,11 @@ class LLM:
             backend=_expand(raw.get("backend", "openai")) or "openai",
             load_in_4bit=bool(_expand(raw.get("load_in_4bit", False))),
             enable_thinking=bool(_expand(raw.get("enable_thinking", False))),
+            adapter=_expand(raw.get("adapter", "")) or "",
             min_interval=float(_expand(raw.get("min_interval", 0.0)) or 0.0),
             extra={k: _expand(v) for k, v in raw.items() if k not in (
                 "base_url", "api_key", "model", "temperature", "max_tokens",
-                "backend", "load_in_4bit", "enable_thinking", "min_interval")},
+                "backend", "load_in_4bit", "enable_thinking", "min_interval", "adapter")},
         )
         self._profiles[name] = prof
         return prof
@@ -242,7 +245,8 @@ class LLM:
             max_new_tokens=int(overrides.pop("max_tokens", prof.max_tokens)),
             temperature=float(overrides.pop("temperature", prof.temperature)),
         )
-        model = get_model(model_id, load_in_4bit=prof.load_in_4bit)
+        model = get_model(model_id, load_in_4bit=prof.load_in_4bit,
+                          adapter=overrides.pop("adapter", None) or prof.adapter or None)
         return model.chat(messages, cfg=cfg, enable_thinking=prof.enable_thinking)
 
     def complete(self, profile: str, system: str, user: str, **overrides: Any) -> str:

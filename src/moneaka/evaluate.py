@@ -46,6 +46,7 @@ class Scored:
     style: int | None = None
     cos_ref: float | None = None
     cjk_punct_ratio: float = 0.0
+    copy_ratio: float = 0.0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -188,6 +189,35 @@ def judge_semantic_rows(llm: LLM, rows: list[dict], arm: str, *, batch_size: int
 # 打分（逐条）
 # ---------------------------------------------------------------------------
 
+_CJK_ONLY = re.compile(r"[\u4e00-\u9fff]")
+
+
+def cjk_only(text: str) -> str:
+    """只留汉字（去标签、去标点、去拉丁）——拿它做字序比较才不会被格式噪声干扰。"""
+    import re as _re
+    from .contract import TAG_RE
+    return "".join(_CJK_ONLY.findall(TAG_RE.sub("", text or "")))
+
+
+def plan_content(plan: str) -> str:
+    for marker in ("内容:", "内容："):
+        if marker in (plan or ""):
+            return plan.split(marker, 1)[1].strip()
+    return plan or ""
+
+
+def copy_ratio(text: str, plan: str) -> float:
+    """输出与指令内容的字序相似度。**阶段 0 翻车的主因就是这个指标没监控**：
+    零样本模型 23/60 逐字照抄草稿，却靠着「内容接得上」在评委那里拿了高分。
+    照抄 = 润色器没干活，1.0 是地板警报，不是满分。
+    """
+    import difflib
+    a, b = cjk_only(text), cjk_only(plan_content(plan))
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
 def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
               embedder: Embedder | None = None, judge: bool = True,
               batch_size: int = 8, sample: int | None = None) -> list[Scored]:
@@ -216,6 +246,7 @@ def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
             turn_id=r["turn_id"], arm=arm, text=text,
             contract_ok=res.ok, violations=[str(v) for v in res.violations],
             cjk_punct_ratio=res.cjk_punct_ratio,
+            copy_ratio=round(copy_ratio(text, r.get("draft", "")), 3) if text else 0.0,
         )
         if r["turn_id"] in style:
             s.style = style[r["turn_id"]]
@@ -248,11 +279,40 @@ def summarize(scored: list[Scored]) -> dict:
             "style_mean": _mean("style"),
             "cos_ref_mean": _mean("cos_ref"),
             "cjk_punct": round(statistics.mean([r.cjk_punct_ratio for r in rows]), 3),
+            "copy_mean": round(statistics.mean([r.copy_ratio for r in rows]), 3),
+            "copy_sticky": round(sum(r.copy_ratio > 0.9 for r in rows) / n, 3),
         }
     return agg
 
 
 def violation_census(scored: list[Scored], top: int = 12) -> list[tuple[str, int]]:
+    """按违规码统计，定位是校验阈值太紧还是模型真不行。
+
+    只统计 **reference** 臂：真实 DAA4 输出中招 = 我们的阔值/切句写错了。
+    """
+    census: dict[str, int] = {}
+    for s in scored:
+        if s.arm == "reference":
+            for v in s.violations:
+                code = v.split(":", 1)[0]
+                census[code] = census.get(code, 0) + 1
+    return sorted(census.items(), key=lambda kv: -kv[1])[:top]
+
+
+def copy_rate_samples(samples) -> dict:
+    """训练完自检用：拿 (指令, 目标) 样本算字序改动量。
+
+    注意这是**数据自身**的改动量（指令 vs 真实输出），不是模型输出的照抄率；
+    它告诉你这个任务到底要求模型改多少——如果接近 0，说明样本没有训练价值。
+    """
+    import statistics
+
+    rs = [copy_ratio(s.target, s.plan) for s in samples]
+    return {
+        "n": len(rs),
+        "mean_change": round(1 - statistics.mean(rs), 3),
+        "copy_sticky(>0.9)": round(sum(r > 0.9 for r in rs) / len(rs), 3) if rs else None,
+    }
     """按违规码统计，定位是校验阈值太紧还是模型真不行。"""
     census: dict[str, int] = {}
     for s in scored:
@@ -275,12 +335,12 @@ def write_report(out_dir: str, scored: list[Scored], agg: dict,
 
     by_id = {p["turn_id"]: p for p in pairs}
     lines = ["# 阶段 0 评测\n",
-             "| arm | n | contract_pass | semantic | style | cos_ref | cjk_punct |",
-             "|---|---|---|---|---|---|---|"]
+             "| arm | n | contract_pass | semantic | style | cos_ref | cjk_punct | copy | 照抄率 |",
+             "|---|---|---|---|---|---|---|---|---|"]
     for arm, a in agg.items():
         lines.append(f"| {arm} | {a['n']} | {a['contract_pass_rate']} | "
                      f"{a['semantic_mean']} | {a['style_mean']} | {a['cos_ref_mean']} | "
-                     f"{a['cjk_punct']} |")
+                     f"{a['cjk_punct']} | {a['copy_mean']} | {a['copy_sticky']} |")
     if ref_violations:
         lines.append("\n> ⚠️ 真数据（reference）也触发的违规码 = 校验阈值定错了，先修阈值再谈模型：")
         lines += [f"> - `{c}` × {n}" for c, n in ref_violations]

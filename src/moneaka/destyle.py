@@ -17,7 +17,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-from . import corpus, prompts
+from . import contract, corpus, prompts
 from .llm import LLM, dump_jsonl
 
 PAIRS_PATH = "data/pairs/pairs.jsonl"
@@ -30,34 +30,48 @@ _SENTINEL = "《player》"
 _SENTINEL_VARIANTS = re.compile(r"[《<〈【\[]\s*player\s*[》>〉】\]]", re.I)
 
 
-def destyle_one(llm: LLM, original: str) -> str:
-    protected = re.sub(r"\[\s*player\s*\]", _SENTINEL, original, flags=re.I)
-    text = llm.complete("destyle", prompts.DESTYLE_SYSTEM,
-                        prompts.DESTYLE_USER.format(original=protected))
-    # 去风格化必须干净：残留的 [标签] 会让润色器误以为标签属于语义内容
-    from .contract import TAG_RE
-    text = TAG_RE.sub("", text).strip()
-    text = _restore_placeholder(text, original)
-    if len(text) < 4:
-        raise ValueError(f"草稿过短或为空: {text!r}")
-    return text
-
-
 _PLAYER_WORD = re.compile(r"(?<![\[])\b(?:[Pp]layer|玩家)\b(?![\]])")
 
 
 def destyle_one(llm: LLM, original: str) -> tuple[str, bool]:
-    """返回 ``(草稿, 是否由模型自行补出 [player]``。"""
+    """返回 ``(表达指令串, 是否由模型自行补出 [player])``。
+
+    表达指令 = 「语气: <反应次序> / 内容: <平实陈述>」两行。把反应次序显式写进输入
+    是这一版的关键改动：旧版只给平实内容，而官方 chosen/rejected 的区别恰好就在反应次序上
+    （见 docs/STYLE_GUIDE.md §5），输入里没有的信息，润色器只能猜或照抄。
+    """
     protected = re.sub(r"\[\s*player\s*\]", _SENTINEL, original, flags=re.I)
-    text = llm.complete("destyle", prompts.DESTYLE_SYSTEM,
-                        prompts.DESTYLE_USER.format(original=protected))
-    # 去风格化必须干净：残留的 [标签] 会让润色器误以为标签属于语义内容
+    raw = llm.complete("destyle", prompts.DESTYLE_SYSTEM,
+                      prompts.DESTYLE_USER.format(original=protected))
+    # 用户尾部已经给到「语气:」，补回来再解析。模型会自己重复前缀（实测 5 例），
+    # 先把开头若干部「语气:」压掉再加。
+    body = re.sub(r"^(?:\s*语气\s*[:：]\s*)+", "", raw.strip())
+    text = "语气: " + body
     from .contract import TAG_RE
     text = TAG_RE.sub("", text).strip()
     text, synthesized = _restore_placeholder(text, original)
-    if len(text) < 4:
-        raise ValueError(f"草稿过短或为空: {text!r}")
+    tone, content = parse_plan(text)
+    # 极短内容（mua~ → 「亲一下」）保留：它们是真实分布的一部分。
+    # 阶段 0 里模型正是在这种短输入上瞎编，从训练集剔掉反而学不会收敛。
+    if not tone or not content:
+        raise ValueError(f"指令不完整: {text!r}")
     return text, synthesized
+
+
+_PLAN_TONE = re.compile(r"^\s*语气[:：]\s*(.*)$", re.M)
+_PLAN_CONTENT = re.compile(r"^\s*内容[:：]\s*(.*)$", re.M | re.S)
+
+
+def parse_plan(plan: str) -> tuple[str, str]:
+    """拆成 (语气, 内容)。拆不开就当没有层次（仍可用于旧格式数据）。"""
+    m_t = _PLAN_TONE.search(plan)
+    m_c = _PLAN_CONTENT.search(plan)
+    tone = (m_t.group(1).strip() if m_t else "")
+    content = (m_c.group(1).strip() if m_c else "")
+    if not content and not m_c:
+        # 旧格式：整个就是一段平实文本
+        content = plan.replace(tone, "").strip() if tone else plan.strip()
+    return tone, content
 
 
 _PLAYER_WORD = re.compile(r"(?<![\[])\b(?:[Pp]layer|玩家)\b(?![\]])")

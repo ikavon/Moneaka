@@ -62,17 +62,24 @@ class DuelResult:
         return ((c - m) / d, (c + m) / d)
 
 
-def duel(llm: LLM, items: list[tuple[str, str, str]], *, profile: str = "judge",
-         seed: int = 0, swap: bool = True, max_items: int | None = None) -> DuelResult:
-    """``items`` = [(user, 文本A, 文本B)]，返回 A 相对 B 的胜率。
+def duel(
+    llm: LLM,
+    items: list[tuple[str, str, str]],
+    *,
+    profile: str = "judge",
+    seed: int = 0,
+    swap: bool = True,
+    max_items: int | None = None,
+) -> DuelResult:
+    """``items`` = [(user, 文本A, 文本B)], 返回 A 相对 B 的胜率。
 
     ``swap=True`` 时每对正反各问一次，用来抵消位置偏差（A 位天然更容易被选）。
     """
-    rng = random.Random(seed)
     res = DuelResult()
     use = items[:max_items] if max_items else items
     for user, a, b in use:
-        for order in ((True, False) if swap else (True,)):
+        orders = (True, False) if swap else (True,)
+        for order in orders:
             x, y = (a, b) if order else (b, a)
             try:
                 out = llm.complete(profile, JUDGE_SYSTEM,
@@ -85,8 +92,8 @@ def duel(llm: LLM, items: list[tuple[str, str, str]], *, profile: str = "judge",
             if pick not in ("A", "B"):
                 res.unparsed += 1
                 continue
-            a_picked = (pick == "A") == order
-            if a_picked:
+            chose_a = (pick == "A") if order else (pick == "B")
+            if chose_a:
                 res.a_wins += 1
             else:
                 res.b_wins += 1

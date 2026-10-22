@@ -19,7 +19,7 @@ from .llm import LLM, dump_jsonl, load_jsonl
 from .normalize import NormStats, normalize
 
 DATA = "data"
-PAIRS = os.path.join(DATA, "pairs", "pairs.jsonl")
+PAIRS = os.path.join(DATA, "pairs", "plan.jsonl")
 
 
 def _runs_dir(name: str) -> str:
@@ -124,7 +124,8 @@ def cmd_polish(args: argparse.Namespace) -> int:
                    polish=None, direct=None, norm=[])
         try:
             if not args.skip_polish:
-                rec["polish"] = restyle.polish(llm, p["draft"], model=model)
+                rec["polish"] = restyle.polish(llm, p["draft"], model=model,
+                                                adapter=args.adapter)
         except Exception as exc:
             print(f"  ! {p['turn_id']} polish 失败: {str(exc)[:80]}")
         try:
@@ -283,7 +284,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("polish", help="草稿 → 润色稿（+ 通用模型直接扮演对照）")
     p.add_argument("--name", required=True)
     p.add_argument("--pairs", default=PAIRS)
-    p.add_argument("--model")
+    p.add_argument("--model", help="润色端点的模型名（如 Qwen/Qwen3-1.7B）")
+    p.add_argument("--adapter", help="LoRA adapter 目录（挂上后自动关掉 few-shot）")
     p.add_argument("--direct-model")
     p.add_argument("--direct-profile", default=None,
                    help="用哪个端点出 direct 对照组（默认 restyle=本地；填 strong 才是真竞品）")
