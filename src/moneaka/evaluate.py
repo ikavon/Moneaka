@@ -70,6 +70,12 @@ class Embedder:
 _ROW_RE = re.compile(r"(\d+)\s*[,，\t ]\s*([0-4])\s*[,，\t ]\s*([0-4])\s*$")
 
 
+def _stable_hash(key: str) -> int:
+    """跨进程稳定的哈希（内置 hash() 带随机盐，重跑会挑到不同样本）。"""
+    import hashlib
+    return int(hashlib.md5(key.encode()).hexdigest()[:8], 16)
+
+
 def parse_batch_scores(text: str) -> dict[int, tuple[int, int]]:
     """从批量输出里抠出 ``idx,semantic,style``。宽容：允许 # / 空格 / 中文逗号 / 箭号。
 
@@ -133,9 +139,21 @@ def judge_rows(llm: LLM, rows: list[dict], arm: str, *, batch_size: int = 8,
 
 def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
               embedder: Embedder | None = None, judge: bool = True,
-              batch_size: int = 8) -> list[Scored]:
+              batch_size: int = 8, sample: int | None = None) -> list[Scored]:
+    """契约校验跑全量（零成本），评委只跑抽样子集（调用配额有限）。
+
+    ``sample`` 是确定性子集（按 turn_id 哈希排序取前 N），不是随机——
+    这样三臂判的是同一批样本，也能重跑复现。
+    """
     rows = list(rows)
-    marks = judge_rows(llm, rows, arm, batch_size=batch_size) if judge else {}
+    marks: dict[str, tuple[int, int]] = {}
+    if judge:
+        if sample and sample < len(rows):
+            ordered = sorted(rows, key=lambda r: _stable_hash(r["turn_id"]))
+            sub = ordered[:sample]
+        else:
+            sub = rows
+        marks = judge_rows(llm, sub, arm, batch_size=batch_size)
     out: list[Scored] = []
     for r in rows:
         text = r.get(arm) or ""

@@ -154,3 +154,27 @@ def test_judge_rows_batches_and_maps_by_id():
     marks = judge_rows(BatchLLM(), rows, "polish batch", batch_size=2) if False else \
             judge_rows(BatchLLM(), rows, "polish", batch_size=2)
     assert marks == {f"t{i}": (4, 3) for i in range(5)}
+
+
+def test_judge_sample_is_deterministic_and_scoped():
+    """抽样必须跨进程稳定，且只判子集（三臂判同一批）。"""
+    from moneaka.llm import LLM
+    from moneaka.evaluate import score_arm
+
+    class CountingLLM(FakeLLM):
+        def __init__(self):
+            super().__init__()
+            self.judged = 0
+
+        def complete(self, profile, system, user, **kw):
+            if profile == "judge":
+                self.judged += user.count("草稿:")
+            return super().complete(profile, system, user, **kw)
+
+    rows = [{"turn_id": f"t{i}", "draft": f"草稿{i}", "polish": "[微笑]好.",
+             "original": "[微笑]好."} for i in range(20)]
+    a, b = CountingLLM(), CountingLLM()
+    score_arm(a, rows, "polish", batch_size=5, sample=6)
+    score_arm(b, rows, "polish", batch_size=5, sample=6)
+    assert a.judged == 6 and b.judged == 6          # 只判 6 条
+    assert all(s.contract_ok for s in score_arm(FakeLLM(), rows, "polish", judge=False))

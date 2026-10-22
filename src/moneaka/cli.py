@@ -110,6 +110,11 @@ def cmd_polish(args: argparse.Namespace) -> int:
 
     out_dir = _runs_dir(args.name)
     os.makedirs(out_dir, exist_ok=True)
+    direct_profile = args.direct_profile or "restyle"
+    if direct_profile != "restyle":
+        dp = llm.profile(direct_profile)
+        print(f"direct 端点: {direct_profile} -> {dp.base_url} model={args.direct_model or dp.model}")
+
     arms_rows = []
     t0 = time.time()
     for i, p in enumerate(pairs, 1):
@@ -120,13 +125,13 @@ def cmd_polish(args: argparse.Namespace) -> int:
             if not args.skip_polish:
                 rec["polish"] = restyle.polish(llm, p["draft"], model=model)
         except Exception as exc:
-            print(f"  ! {p['turn_id']} polish 失败: {exc}")
+            print(f"  ! {p['turn_id']} polish 失败: {str(exc)[:80]}")
         try:
             if not args.skip_direct:
                 rec["direct"] = restyle.direct(llm, p["user"], context=p.get("context"),
-                                                model=args.direct_model)
+                                                profile=direct_profile, model=args.direct_model)
         except Exception as exc:
-            print(f"  ! {p['turn_id']} direct 失败: {exc}")
+            print(f"  ! {p['turn_id']} direct 失败: {str(exc)[:80]}")
         arms_rows.append(rec)
         if i % 10 == 0 or i == len(pairs):
             print(f"  polish {i}/{len(pairs)}  {time.time() - t0:.0f}s")
@@ -171,7 +176,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
         print(f"  评分: {arm}")
         scored += evaluate.score_arm(llm, rows, arm, embedder=embedder,
                                      judge=not args.no_judge,
-                                     batch_size=args.judge_batch)
+                                     batch_size=args.judge_batch,
+                                     sample=args.judge_sample)
 
     agg = evaluate.summarize(scored)
     ref_viol = evaluate.violation_census(scored)
@@ -221,6 +227,8 @@ def main(argv=None) -> int:
     p.add_argument("--pairs", default=PAIRS)
     p.add_argument("--model")
     p.add_argument("--direct-model")
+    p.add_argument("--direct-profile", default=None,
+                   help="用哪个端点出 direct 对照组（默认 restyle=本地；填 strong 才是真竞品）")
     p.add_argument("--limit", type=int)
     p.add_argument("--skip-polish", action="store_true")
     p.add_argument("--skip-direct", action="store_true")
@@ -234,6 +242,8 @@ def main(argv=None) -> int:
     p.add_argument("--no-judge", action="store_true")
     p.add_argument("--judge-batch", type=int, default=8,
                    help="批量评委每批条数（默认 8；TPM 紧就调小）")
+    p.add_argument("--judge-sample", type=int, default=None,
+                   help="评委只跑 N 条抽样（契约校验仍跑全量）")
     p.add_argument("--only-arms", default="")
     p.set_defaults(func=cmd_eval)
 

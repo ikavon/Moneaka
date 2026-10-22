@@ -26,7 +26,11 @@ def polish(llm: LLM, draft: str, *, profile: str = "restyle", model: str | None 
 def direct(llm: LLM, user_msg: str, context: list[dict] | None = None,
            *, profile: str = "restyle", model: str | None = None,
            system: str | None = None) -> str:
-    """通用模型按官方骨架直接扮演（对照组）。system 默认取数据里的骨架原文。"""
+    """按官方骨架 prompt 直接扮演（对照组）。system 默认取数据里的骨架原文。
+
+    ``profile`` 决定是谁在演：本地小模型（衡量「润色器 vs 小模型自己演」）
+    或强模型（衡量「润色器 vs 通用大模型直接上」）——后者才是真正的竞品。
+    """
     sys_txt = system if system is not None else corpus.skeleton_prompt()
     msgs = [{"role": "system", "content": sys_txt}]
     for m in (context or []):
