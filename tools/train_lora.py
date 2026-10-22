@@ -48,6 +48,9 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=None, help="只用前 N 条（调试用）")
     ap.add_argument("--held-out", type=int, default=20)
     ap.add_argument("--q", action="store_true", help="4bit 基座（QLoRA），省 ~2GB")
+    ap.add_argument("--save-steps", type=int, default=None,
+                    help="每隔多少步存一次；默认每 epoch 一次（用来离线做 duel 选点）")
+    ap.add_argument("--save-total", type=int, default=12)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--smoke", action="store_true", help="30 步冒烟，只验证链路")
     args = ap.parse_args()
@@ -92,7 +95,10 @@ def main() -> int:
     # 本环境 trl 1.16 的 SFTConfig 没有 warmup_ratio，只有 warmup_steps（绝对步数）
     n_steps = steps if steps > 0 else max(1, int(math.ceil(len(train_s) / args.accum) * args.epochs))
     warmup = max(1, int(n_steps * args.warmup_ratio))
-    print(f"总步数≈{n_steps} warmup={warmup}")
+    save_steps = args.save_steps or max(1, len(train_s) // args.accum)   # ≈每 epoch 一次
+    if args.smoke:
+        save_steps = 1000
+    print(f"总步数≈{n_steps} warmup={warmup} 每 {save_steps} 步存点")
     cfg = SFTConfig(
         output_dir=args.out,
         num_train_epochs=0.5 if args.smoke else args.epochs,
@@ -110,10 +116,11 @@ def main() -> int:
         gradient_checkpointing=True,
         bf16=True,
         logging_steps=5,
-        save_steps=1000,
+        save_strategy="steps",
+        save_steps=save_steps,
         eval_strategy="steps" if not args.smoke else "no",
         eval_steps=25,
-        save_total_limit=2,
+        save_total_limit=args.save_total,
         seed=args.seed,
         report_to=[],
         optim="paged_adamw_8bit" if args.q else "adamw_torch",
@@ -134,6 +141,8 @@ def main() -> int:
     print(f"完成: train_loss={res.training_loss:.3f} 峰值显存={mem:.2f} GiB")
 
     if not args.smoke:
+        # 注意：不要用 eval_loss 选点。实测 eval_loss 从 1.07 涨到 1.89 的同时，
+        # 盲评胜率反而从 0.30 升到 0.38——这个任务上记忆≠退化，损失不是好代理。
         trainer.save_model(args.out)
         tok.save_pretrained(args.out)
         print(f"adapter 已存到 {args.out}")

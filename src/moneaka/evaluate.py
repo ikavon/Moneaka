@@ -47,6 +47,7 @@ class Scored:
     cos_ref: float | None = None
     cjk_punct_ratio: float = 0.0
     copy_ratio: float = 0.0
+    copy_excess: float = 0.0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -248,6 +249,11 @@ def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
             cjk_punct_ratio=res.cjk_punct_ratio,
             copy_ratio=round(copy_ratio(text, r.get("draft", "")), 3) if text else 0.0,
         )
+        # 绝对相似度没意义：真实 DAA4 输出对指令的相似度本来就有 ~0.71（内容行是同一
+        # 件事的中性重述）。只有**超出真实基线**的那部分才是照抄。
+        ref = r.get("reference") or r.get("original") or ""
+        if text and ref:
+            s.copy_excess = round(s.copy_ratio - copy_ratio(ref, r.get("draft", "")), 3)
         if r["turn_id"] in style:
             s.style = style[r["turn_id"]]
         if r["turn_id"] in sem:
@@ -281,6 +287,7 @@ def summarize(scored: list[Scored]) -> dict:
             "cjk_punct": round(statistics.mean([r.cjk_punct_ratio for r in rows]), 3),
             "copy_mean": round(statistics.mean([r.copy_ratio for r in rows]), 3),
             "copy_sticky": round(sum(r.copy_ratio > 0.9 for r in rows) / n, 3),
+            "copy_excess": round(statistics.mean([r.copy_excess for r in rows]), 3),
         }
     return agg
 
@@ -335,12 +342,12 @@ def write_report(out_dir: str, scored: list[Scored], agg: dict,
 
     by_id = {p["turn_id"]: p for p in pairs}
     lines = ["# 阶段 0 评测\n",
-             "| arm | n | contract_pass | semantic | style | cos_ref | cjk_punct | copy | 照抄率 |",
+             "| arm | n | contract_pass | semantic | style | cos_ref | cjk_punct | copy | 超额照抄 |",
              "|---|---|---|---|---|---|---|---|---|"]
     for arm, a in agg.items():
         lines.append(f"| {arm} | {a['n']} | {a['contract_pass_rate']} | "
                      f"{a['semantic_mean']} | {a['style_mean']} | {a['cos_ref_mean']} | "
-                     f"{a['cjk_punct']} | {a['copy_mean']} | {a['copy_sticky']} |")
+                     f"{a['cjk_punct']} | {a['copy_mean']} | {a['copy_excess']:+} |")
     if ref_violations:
         lines.append("\n> ⚠️ 真数据（reference）也触发的违规码 = 校验阈值定错了，先修阈值再谈模型：")
         lines += [f"> - `{c}` × {n}" for c, n in ref_violations]
