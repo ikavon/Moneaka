@@ -24,3 +24,6 @@ roles:
   destyle: strong
   judge: strong
   restyle: local
+  # 编剧必须走强模型：它负责「说什么、什么情绪」，是无状态润色器唯一的信息来源。
+  # 用本地 1.7B 当编剧等于让它同时做判断题和作文题，那就白拆了。
+  screenwriter: strong

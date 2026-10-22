@@ -1,0 +1,30 @@
+
+=== 生成 checkpoint-112 ===
+      checkpoint-112  win=0.457 CI[0.37, 0.55]  sem=3.05 (≤2分 15条)  契约 100%
+
+=== 生成 checkpoint-224 ===
+      checkpoint-224  win=0.362 CI[0.28, 0.45]  sem=3.45 (≤2分 7条)  契约 100%
+
+=== 生成 checkpoint-336 ===
+      checkpoint-336  win=0.422 CI[0.34, 0.51]  sem=3.43 (≤2分 8条)  契约 100%
+
+=== 生成 checkpoint-448 ===
+      checkpoint-448  win=0.388 CI[0.3, 0.48]  sem=3.47 (≤2分 6条)  契约 100%
+
+=== 生成 checkpoint-452 ===
+      checkpoint-452  win=0.328 CI[0.25, 0.42]  sem=3.48 (≤2分 3条)  契约 100%
+
+=== 生成 run8 ===
+                run8  win=0.448 CI[0.36, 0.54]  sem=3.43 (≤2分 6条)  契约 100%
+
+=== 选点表 ===
+          checkpoint    win    sem  判定
+      checkpoint-112  0.457   3.05  语义淘汰(<3.33)
+      checkpoint-224  0.362   3.45  
+      checkpoint-336  0.422   3.43  
+      checkpoint-448  0.388   3.47  
+      checkpoint-452  0.328   3.48  
+                run8  0.448   3.43  ← 选中
+
+语义下限 3.33（最高 3.48 - 0.15）；选中 run8
+写入 D:\Python_projects\Moneaka\data\sweep\run8_joint.json

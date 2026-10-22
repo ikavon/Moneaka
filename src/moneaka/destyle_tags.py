@@ -57,7 +57,7 @@ def neutralize(text: str) -> str:
     text = _STYLE_MARKS.sub(" ", text)
     text = _BARE_PLAYER.sub("[player]", text)
     text = _SPACES.sub(" ", text).strip()
-    return text.strip(" ,;:")
+    return text.strip(" ,;:").rstrip(".").strip()
 
 
 class SegmentError(ValueError):

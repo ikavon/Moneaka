@@ -1,0 +1,21 @@
+{
+ "rows": [
+  {
+   "run": "pickg210_run8_final",
+   "n": 206,
+   "contract": 1.0,
+   "win": 0.447,
+   "win_ci": [
+    0.4,
+    0.49
+   ],
+   "sem": 3.59,
+   "sem_low": 16,
+   "sem_n": 206,
+   "unparsed": 0,
+   "checkpoint": "run8"
+  }
+ ],
+ "best": "run8",
+ "sem_floor": 3.44
+}
