@@ -61,7 +61,7 @@ def build_pref_rows(samples: list[dataset.Sample], axes: list[str],
     rows = []
     for si, s in enumerate(samples):
         msgs = s.as_messages()
-        prompt = msgs[:-1]                      # system + user(表达指令)
+        prompt = msgs[:-1]    # system + user(对话上下文 + 表达指令)，与 SFT 逐字一致
         negs = negatives.negatives(s.target, seed=si + seed)
         for ax in axes:
             neg = negs.get(ax)
@@ -88,7 +88,7 @@ def main() -> int:
     ap.add_argument("--lora-r", type=int, default=16)
     ap.add_argument("--lora-alpha", type=int, default=32)
     ap.add_argument("--accum", type=int, default=8)
-    ap.add_argument("--max-len", type=int, default=768)
+    ap.add_argument("--max-len", type=int, default=896)
     ap.add_argument("--held-out", type=int, default=20)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--smoke", action="store_true")
@@ -128,8 +128,10 @@ def main() -> int:
     cfg = DPOConfig(
         output_dir=args.out,
         beta=args.beta,
+        # 本版 trl 只支持 truncation_mode="keep_start"，也就是**从尾部截**：
+        # 序列超长会砍掉 assistant 回复的结尾，而风格恰恰在结尾的语气词/标签上。
+        # 所以 max_length 要给足（实测单条 prompt+回复 ≤ ~700 token），宁可用小 batch。
         max_length=args.max_len,
-        max_prompt_length=512,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=args.accum,
         learning_rate=args.lr,
@@ -147,9 +149,17 @@ def main() -> int:
         report_to=[],
     )
     trainer = DPOTrainer(
-        model=merged, args=cfg, train_dataset=ds, peft_config=lora,
+        model=loaded, args=cfg, train_dataset=ds, peft_config=lora,
         processing_class=tok,
     )
+    # 自己载入并搬到 cuda，**不要用 device_map**：DPOTrainer 给 ref model 建 PEFT
+    # "ref" adapter 时，accelerate 的分片加载会让一部分权重停在 meta device 上，
+    # 反向传播直接炸 "expected device meta but got cuda:0"（实测冒烟复现）。
+    from transformers import AutoModelForCausalLM
+    loaded = AutoModelForCausalLM.from_pretrained(merged, dtype=torch.bfloat16,
+                                                  trust_remote_code=True).to("cuda")
+    loaded.config.use_cache = False
+
     print("DPO 开训…")
     res = trainer.train()
     mem = torch.cuda.max_memory_allocated() / 2**30

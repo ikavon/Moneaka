@@ -47,6 +47,8 @@ def main() -> int:
     ap.add_argument("--weight-decay", type=float, default=0.02)
     ap.add_argument("--limit", type=int, default=None, help="只用前 N 条（调试用）")
     ap.add_argument("--held-out", type=int, default=20)
+    ap.add_argument("--augment", type=int, default=1,
+                    help="输入侧增广：同一目标按几个历史宽度出变体（1=关）")
     ap.add_argument("--q", action="store_true", help="4bit 基座（QLoRA），省 ~2GB")
     ap.add_argument("--save-steps", type=int, default=None,
                     help="每隔多少步存一次；默认每 epoch 一次（用来离线做 duel 选点）")
@@ -65,6 +67,13 @@ def main() -> int:
     if not samples:
         print("没有可用样本"); return 1
     train_s, eval_s = dataset.held_out(samples, n=args.held_out, seed=args.seed)
+    if args.augment > 1:
+        # 增广只加在训练侧；留出集必须保持 canonical 输入（last_n=4），
+        # 否则不同 run 的评测输入不一样，胜率就不可比了。
+        widths = (2, 4, 6)[: max(2, args.augment)]
+        before = len(train_s)
+        train_s = dataset.expand(train_s, last_ns=widths)
+        print(f"增广: {before} → {len(train_s)} 条（宽度 {widths}，留出集不增广）")
     print(f"训练 {len(train_s)} 条 / 留出 {len(eval_s)} 条")
 
     tok = AutoTokenizer.from_pretrained(args.model)

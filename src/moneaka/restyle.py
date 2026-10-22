@@ -15,16 +15,22 @@ from .contract import TAG_RE
 
 
 def polish(llm: LLM, plan: str, *, profile: str = "restyle", model: str | None = None,
-           adapter: str | None = None, few_shot: bool | None = None) -> str:
+           adapter: str | None = None, few_shot: bool | None = None,
+           context: list | None = None, user: str | None = None) -> str:
     """把表达指令改写成莫妮卡口吻。
 
-    ``few_shot`` 默认自动：本地基座模型需要例子引导，微调后的 adapter 不需要
-    （例子 ~600 token，而真实输出中位 35 字，白占上下文）。
+    ``context``/``user`` 是对话历史。标签选择是上下文的函数，不喂就只能退回
+    众数（实测错例清一色选「微笑」）。训练样本用的就是带历史的输入，
+    推理不一致会直接掉性能。
+
+    ``few_shot`` 默认自动：基座模型需要例子引导，挂了 adapter 就不需要。
+    **训练与推理必须走同一个分支**，否则分布不一致。
     """
     if few_shot is None:
         few_shot = adapter is None
     text = llm.complete(profile, prompts.restyle_system(few_shot=few_shot),
-                        prompts.RESTYLE_USER.format(plan=plan),
+                        prompts.RESTYLE_USER_BODY.format(
+                            context=prompts.render_context(context, user), plan=plan),
                         **({"model": model} if model else {}),
                         **({"adapter": adapter} if adapter else {}))
     # 润色器不许输出外壳：去掉可能的「改写：」前缀与包裹引号

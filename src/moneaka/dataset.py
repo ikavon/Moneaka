@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import contract, prompts
 from .llm import load_jsonl
@@ -38,11 +38,20 @@ class Sample:
     plan: str
     target: str
     user_msg: str = ""
+    context: list | None = None
+    #: 呷进输入的历史句数。训练时按多个宽度造变体（见 expand），
+    #: 但**评测永远用 canonical=4**，否则跳 run 的数字不可比。
+    last_n: int = 4
+
+    def user_block(self) -> str:
+        # 不传 context：润色器无状态（见 prompts.RESTYLE_USER_BODY 注释）。
+        # `context` 字段留着只是为了旧 pairs 文件能读，**不进输入**。
+        return prompts.RESTYLE_USER_BODY.format(plan=self.plan)
 
     def as_messages(self) -> list[dict]:
         return [
             {"role": "system", "content": prompts.restyle_system(few_shot=False)},
-            {"role": "user", "content": self.plan},
+            {"role": "user", "content": self.user_block()},
             {"role": "assistant", "content": self.target},
         ]
 
@@ -58,7 +67,11 @@ def build(pairs_path: str, *, require_target_contract: bool = True,
         dropped[code] = dropped.get(code, 0) + 1
 
     for r in rows:
-        plan = clean_plan(r.get("draft", ""))
+        # 两种语料格式：旧版（draft = 自由描述的「语气/内容」）与
+        # 受控版（plan = 「语气: 标签A > 标签B」+ 逐段内容，见 destyle_tags）。
+        raw_plan = (r.get("plan") or "").strip()
+        plan = raw_plan or clean_plan(r.get("draft", ""))
+        tagged = bool(raw_plan)
         target = (r.get("original") or "").strip()
         content = ""
         for marker in ("内容:", "内容："):
@@ -75,10 +88,18 @@ def build(pairs_path: str, *, require_target_contract: bool = True,
             drop("target_too_long"); continue
         if require_target_contract and not contract.check(target).ok:
             drop("target_breaks_contract"); continue
-        if target.strip() == content.strip():
+        if tagged:
+            from .destyle_tags import MAX_SEGMENTS, SegmentError, parse_tagged_plan
+            try:
+                tags, _ = parse_tagged_plan(plan)
+            except SegmentError as exc:
+                drop(f"tagged_{str(exc).split(':')[0][:20]}"); continue
+            if len(tags) > MAX_SEGMENTS:
+                drop("tagged_too_many_segments"); continue
+        elif target.strip() == content.strip():
             drop("identical"); continue
         kept.append(Sample(turn_id=r["turn_id"], plan=plan, target=target,
-                           user_msg=r.get("user", "")))
+                           user_msg=r.get("user", ""), context=r.get("context") or []))
         if limit and len(kept) >= limit:
             break
 
@@ -91,6 +112,31 @@ def to_hf_dataset(samples: list[Sample]):
     from datasets import Dataset
 
     return Dataset.from_list([{"messages": s.as_messages()} for s in samples])
+
+
+def expand(samples: list[Sample], last_ns: tuple[int, ...] = (2, 4, 6)) -> list[Sample]:
+    """同一条 (指令→真话) 按不同历史长度出多个变体（只复制输入，不造新目标）。
+
+    目的是**缓解过拟合 + 不把模型锁死在「历史恰好 4 句」上**。
+    真实调用时 agent 给的上下文长短不一（MC 里可能只有一句，MAS 里可能十句），
+    固定宽度训练会让模型把它当成输入格式的一部分去记。
+
+    注意：这是**输入侧增广**，不是新信息——目标完全相同，所以它不能突破
+    226 条真实风格样本的上限，只能缓解过拟合。不要拿它当「数据翻倍」汇报。
+    """
+    out: list[Sample] = []
+    for s in samples:
+        seen: set[str] = set()
+        for n in last_ns:
+            v = replace(s, last_n=n)
+            key = v.user_block()
+            # 历史本来就比 n 短的，不同 n 会渲染成**逐字相同**的输入。
+            # 不去重就会白拿到若干个完全一样的样本：loss 呷得更低，但不注入任何新东西。
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(v)
+    return out
 
 
 def held_out(samples: list[Sample], n: int = 20, seed: int = 0) -> tuple[list[Sample], list[Sample]]:

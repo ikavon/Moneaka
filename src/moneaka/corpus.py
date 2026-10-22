@@ -81,7 +81,10 @@ def _context_before(msgs: list[dict], ti: int) -> tuple[list[dict], str]:
     seen = -1
     for i, m in enumerate(msgs):
         if m.get("role") == "assistant":
-            if seen == ti:
+            # 遇到「要预测的那一轮」就必须停手。原来的写法是 `if seen == ti: break`
+            # 然后无条件 `seen += 1`，结果第 ti 个 assistant 已经被 upto 收进去了——
+            # **答案出现在自己的输入里**（ti=0 连 user 都会取到下一句提问）。
+            if seen + 1 == ti:
                 break
             seen += 1
         upto = i + 1
@@ -91,9 +94,53 @@ def _context_before(msgs: list[dict], ti: int) -> tuple[list[dict], str]:
     return ctx, user
 
 
+def _is_sharegpt(row: dict) -> bool:
+    """MAICA 基座数据集格式：``{"id":..., "conversations":[{"from","value"}]}``。
+
+    与 RLHF 分片的 ``messages``/``rejected_messages`` 是两套东西，但下游只要
+    ``(context, user, chosen)`` 三元组，所以在这里归一化掉，管线其余部分不动。
+    """
+    return "conversations" in row and "messages" not in row
+
+
+def _turns_sharegpt(rows: list[dict], *, prefix: str = "ds") -> list[Turn]:
+    """sharegpt 版式 → Turn。
+
+    实测这份数据 **每行只有 3 条消息**（system / user / assistant），也就是
+    单轮「一句提问 → 一段回答」，没有多轮历史；同一个 ``id`` 会重复出现十几次
+    （同义改写簇：同样的意图，不同的说法和不同的回答）。这对润色器是好事——
+    它天然提供了「输入措辞变体」，正是我们自己造不出来的那部分泛化性。
+    """
+    out: list[Turn] = []
+    for ri, row in enumerate(rows):
+        conv = row.get("conversations") or []
+        sys_txt = next((m.get("value", "") for m in conv if m.get("from") == "system"), "")
+        hist: list[dict] = []
+        n_a = 0
+        for m in conv:
+            who = m.get("from")
+            val = m.get("value", "")
+            if who == "system":
+                continue
+            if who == "user":
+                hist.append({"role": "user", "content": val})
+                continue
+            ctx = list(hist)
+            user = next((c["content"] for c in reversed(ctx) if c["role"] == "user"), "")
+            out.append(Turn(
+                turn_id=f"{prefix}-{ri}-{n_a}", row_index=ri, turn_index=n_a,
+                system=sys_txt, context=ctx, user=user, chosen=val,
+            ))
+            hist.append({"role": "assistant", "content": val})
+            n_a += 1
+    return out
+
+
 def chosen_turns(rows: list[dict] | None = None, path: str | None = None) -> list[Turn]:
-    """全部 assistant 轮（chosen）。本分片 226 条，是阶段 0 的风格参照池。"""
+    """全部 assistant 轮（chosen）。自动识别两种版式（RLHF messages / sharegpt conversations）。"""
     rows = rows if rows is not None else load_rows(path)
+    if rows and all(_is_sharegpt(r) for r in rows):
+        return _turns_sharegpt(rows, prefix=os.path.splitext(os.path.basename(path or "ds"))[0][:12])
     out: list[Turn] = []
     for ri, row in enumerate(rows):
         msgs = row.get("messages") or []

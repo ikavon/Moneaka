@@ -163,7 +163,10 @@ def judge_semantic_rows(llm: LLM, rows: list[dict], arm: str, *, batch_size: int
             raw = llm.complete(profile, prompts.JUDGE_BATCH_SYSTEM,
                                prompts.JUDGE_BATCH_USER.format(items=body, n=len(batch)),
                                temperature=0.0, max_tokens=12 * len(batch) + 40)
-            parsed = parse_batch_scores(raw, ncols=2)
+            # 这里必须 ncols=1：语义评委的 prompt 只要求「编号,语义分」两列。
+            # 曾误写成 ncols=2（要求三个数字），于是解析永远失败、语义分恒为空——
+            # 而调用方把空字典当成「没测」，报告里就看不出这条指标其实从未生效。
+            parsed = parse_batch_scores(raw, ncols=1)
         except Exception as exc:
             print(f"  ! 语义批次失败 ({len(batch)} 条): {str(exc)[:100]}")
             missing.extend(batch)
@@ -179,7 +182,7 @@ def judge_semantic_rows(llm: LLM, rows: list[dict], arm: str, *, batch_size: int
                                prompts.JUDGE_BATCH_USER.format(
                                    items=prompts.judge_batch_item(i, r["draft"], r[arm]), n=1),
                                temperature=0.0, max_tokens=48)
-            one = parse_batch_scores(raw, ncols=2)
+            one = parse_batch_scores(raw, ncols=1)
             if one:
                 scores[r["turn_id"]] = (one.get(i) or next(iter(one.values())))[0]
         except Exception as exc:

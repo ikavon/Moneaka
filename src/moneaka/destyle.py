@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from . import contract, corpus, prompts
@@ -100,13 +101,21 @@ def _restore_placeholder(draft: str, original: str) -> tuple[str, bool]:
 
 def run(profile_llm: LLM | None = None, limit: int | None = None,
         out_path: str = PAIRS_PATH, workers: int = 4, log=print,
-        source: str | None = None) -> list[dict]:
+        source: str | None = None, require_contract: bool = False) -> list[dict]:
     """造草稿。若 ``out_path`` 已有内容则**按 turn_id 续跑**（只补缺的）。
 
     续跑很重要：去风格化是强模型调用，失败重跑一次就是几十次配额。
     """
     llm = profile_llm or LLM()
     turns = list(corpus.iter_for_destyle(limit, path=source))
+    if require_contract:
+        # 只收**本来就符合生产契约**的轮。理由不是洁癖：`MAICA_ds_basis` 的骨架 prompt
+        # 里没有「每句不超过60字」那条（实测 system 原文如此），所以 1598 轮里有 335 轮
+        # 是长句/无标签形态。把它们当正例训练，润色器就会学到「一句塞两个意思」——
+        # 而那恰恰是要避免的形态。实测筛后 1263 轮可用（79%）。
+        keep = [t for t in turns if contract.check(t.chosen).ok]
+        log(f"契约筛选: {len(turns)} → {len(keep)} 轮（丢掉长句/无标签形态）")
+        turns = keep
     # 同位置的 rejected（官方偏好数据的较差输出）一并存下，当事后参照
     rejected_by_id = {t.turn_id: r for t, r in corpus.contrasts(path=source)}
 
@@ -124,13 +133,26 @@ def run(profile_llm: LLM | None = None, limit: int | None = None,
 
     rows: list[dict] = [None] * len(todo)  # type: ignore[list-item]
     failed: list[tuple[str, str]] = []
+    lock = threading.Lock()
+
+    def checkpoint() -> None:
+        """每 25 条落一次盘。
+
+        这不是保险丝而是必需品：全量 1263 条要跑 40-60 分钟，而强模型端点会 429。
+        原来只在最后 dump 一次，中途挂掉就是**几十分钟的 API 配额白烧**，
+        而且续跑机制（按 turn_id 补缺）完全用不上——因为什么都没写下来。
+        """
+        got = [r for r in rows if r]
+        if got:
+            dump_jsonl(out_path, list(existing.values()) + got)
 
     def work(i_t: tuple[int, corpus.Turn]):
         i, t = i_t
         try:
             draft, synthesized = destyle_one(llm, t.chosen)
         except Exception as exc:
-            failed.append((t.turn_id, f"{exc} | 原稿: {t.chosen[:60]}"))
+            with lock:
+                failed.append((t.turn_id, f"{exc} | 原稿: {t.chosen[:60]}"))
             return i, None
         return i, {
             "turn_id": t.turn_id,
@@ -148,6 +170,8 @@ def run(profile_llm: LLM | None = None, limit: int | None = None,
         for i, row in pool.map(work, enumerate(todo)):
             rows[i] = row
             done += 1
+            if done % 25 == 0:
+                checkpoint()
             if done % 10 == 0 or done == len(todo):
                 log(f"  destyle {done}/{len(todo)}")
 

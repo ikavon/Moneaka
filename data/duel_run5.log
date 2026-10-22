@@ -1,0 +1,9 @@
+
+胜率矩阵（行 vs 列；0.5=打平）
+
+                 draft     polish  reference
+draft             0.50       0.03       0.00
+polish            0.97       0.50       0.38
+reference         1.00       0.62       0.50
+
+每对比较次数(正反各一次): 40

@@ -92,7 +92,8 @@ def cmd_destyle(args: argparse.Namespace) -> int:
     llm = LLM()
     print(f"端点: destyle={llm.profile('destyle').base_url} model={llm.profile('destyle').model}")
     destyle_mod.run(llm, limit=args.limit, workers=args.workers,
-                    out_path=args.out or PAIRS, source=args.source)
+                    out_path=args.out or PAIRS, source=args.source,
+                    require_contract=args.require_contract)
     return 0
 
 
@@ -125,7 +126,8 @@ def cmd_polish(args: argparse.Namespace) -> int:
         try:
             if not args.skip_polish:
                 rec["polish"] = restyle.polish(llm, p["draft"], model=model,
-                                                adapter=args.adapter)
+                                               adapter=args.adapter,
+                                               context=p.get("context"), user=p.get("user"))
         except Exception as exc:
             print(f"  ! {p['turn_id']} polish 失败: {str(exc)[:80]}")
         try:
@@ -279,6 +281,8 @@ def main(argv=None) -> int:
     p.add_argument("--limit", type=int)
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--out")
+    p.add_argument("--require-contract", action="store_true",
+                   help="只处理本来就符合契约的轮（新语料必开，见 destyle.run 注释）")
     p.set_defaults(func=cmd_destyle)
 
     p = sub.add_parser("polish", help="草稿 → 润色稿（+ 通用模型直接扮演对照）")

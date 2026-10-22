@@ -11,3 +11,6 @@ data/models/
 docs/raw/*.txt
 configs/private.yaml
 data/adapters/
+
+# 上游数据集（maica-tos，用 git clone 获取，不随仓库分发）
+data/MAICA_ds_basis/

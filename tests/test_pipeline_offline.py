@@ -17,6 +17,27 @@ def _join(parts):  # 批量评委的假回包要按行拼接
     return "\n".join(parts)
 
 
+def test_context_before_excludes_the_turn_being_generated():
+    """回归测试：`_context_before` 以前会把**要生成的那一轮回答**算进历史，
+    而且 ti=0 时 `user` 会取到下一句提问。这个泄漏让 run4 的标签吻合率
+    假高到 98%（模型在抄输入里的答案），必须钉住。
+    """
+    from moneaka.corpus import _context_before
+
+    msgs = [{"role": "system", "content": "s"},
+            {"role": "user", "content": "U0"},
+            {"role": "assistant", "content": "A0"},
+            {"role": "user", "content": "U1"},
+            {"role": "assistant", "content": "A1"}]
+    ctx0, u0 = _context_before(msgs, 0)
+    assert [m["content"] for m in ctx0] == ["U0"] and u0 == "U0"
+    ctx1, u1 = _context_before(msgs, 1)
+    assert [m["content"] for m in ctx1] == ["U0", "A0", "U1"] and u1 == "U1"
+    # 任何一轮的历史里都不能出现自己的答案
+    assert "A0" not in [m["content"] for m in ctx0]
+    assert "A1" not in [m["content"] for m in ctx1]
+
+
 class FakeLLM:
     """按 profile 分派的假端点。"""
 
@@ -36,11 +57,10 @@ class FakeLLM:
         if profile == "restyle":
             return "[微笑]当然愿意了, 那我们一起去躲雨吧."
         if profile == "judge":
-            # 盲评风格只要「编号,分」两列；语义评委要「编号,语义分,风格分」三列。
+            # 两个评委的 prompt 都只要「编号,分」两列（语义评委曾按三列解析，
+            # 那是个 bug：解析永远失败、语义分恒为空，见 evaluate.judge_semantic_rows）。
             idents = re.findall(r"^#(\d+)$", user, re.M)
-            if "说话方式" in system:
-                return _join(f"{i},4" for i in idents)
-            return _join(f"{i},4,3" for i in idents)
+            return _join(f"{i},4" for i in idents)
         return ""
 
     def chat(self, profile, messages, **kw):
@@ -160,7 +180,10 @@ def test_judge_rows_batches_and_maps_by_id():
 
         def complete(self, profile, system, user, **kw):
             idents = re.findall(r"^#(\d+)$", user, re.M)
-            return _join(f"{i},4,3" for i in idents)
+            # 语义评委只要两列（编号,分）。旧版这里返回三列，正好掩盖了
+            # evaluate.judge_semantic_rows 用 ncols=2 解析的 bug——两边一起错，
+            # 所以 34 个测试全绿而语义分恒为空。
+            return _join(f"{i},4" for i in idents)
 
     rows = [{"turn_id": f"t{i}", "draft": "草稿", "polish": "结果"} for i in range(5)]
     marks = judge_semantic_rows(BatchLLM(), rows, "polish", batch_size=2)
