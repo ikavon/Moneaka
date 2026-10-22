@@ -164,11 +164,15 @@ def cmd_eval(args: argparse.Namespace) -> int:
         base = by_id.get(r["turn_id"], {})
         rows.append({
             "turn_id": r["turn_id"],
+            "user": r.get("user") or base.get("user", ""),
             "draft": r.get("draft") or base.get("draft", ""),
             "original": r.get("original") or base.get("original", ""),
             "reference": r.get("original") or base.get("original", ""),
             "direct": r.get("direct"),
             "polish": r.get("polish"),
+            # draft 单独作为一个臂：它就「平实草稿」本身。
+            # 润色器真正贡献的 style = polish - draft，而不是 polish - 0。
+            "draft_arm": r.get("draft") or base.get("draft", ""),
         })
 
     llm = LLM()
@@ -180,11 +184,15 @@ def cmd_eval(args: argparse.Namespace) -> int:
             print(f"  ! embedding 不可用，跳过 cos_ref 列: {exc}")
 
     scored = []
+    arm_field = {"draft": "draft_arm", "reference": "reference",
+                 "direct": "direct", "polish": "polish"}
     for arm in evaluate.ARMS:
         if args.only_arms and arm not in args.only_arms.split(","):
             continue
         print(f"  评分: {arm}")
-        scored += evaluate.score_arm(llm, rows, arm, embedder=embedder,
+        view = [{"turn_id": r["turn_id"], "draft": r["draft"], "user": r.get("user", ""),
+                 arm: r.get(arm_field[arm])} for r in rows]
+        scored += evaluate.score_arm(llm, view, arm, embedder=embedder,
                                      judge=not args.no_judge,
                                      batch_size=args.judge_batch,
                                      sample=args.judge_sample)
@@ -202,6 +210,46 @@ def cmd_eval(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # prompt —— 把契约/模板打出来，方便人工核对与复制到别处
 # ---------------------------------------------------------------------------
+
+def cmd_duel(args: argparse.Namespace) -> int:
+    """成对比较：风格评测唯一站得住的自动指标（绝对打分已被证伪）。"""
+    from . import duel
+
+    llm = LLM()
+    arms_text = args.arms.split(",")
+
+    if args.calibrate:
+        info = duel.calibrate(llm, n=args.calibrate)
+        print("评委校准（官方 chosen vs rejected）:")
+        print(f"  {info['comparisons']} 次比较, 准确率 {info['accuracy']:.0%} "
+              f"CI95={info['ci95']}, 未解析 {info['unparsed']}")
+        if info["accuracy"] < 0.7:
+            print("  ⚠️ 低于 70%，这个评委不能用来做结论")
+        return 0
+
+    pairs = load_jsonl(args.pairs)
+    arms_rows = {r["turn_id"]: r for r in load_jsonl(os.path.join(_runs_dir(args.name), "arms.jsonl"))}
+    rows = []
+    for tid, r in arms_rows.items():
+        base = next((p for p in pairs if p["turn_id"] == tid), {})
+        rows.append({"turn_id": tid, "user": base.get("user", ""),
+                     "draft": r.get("draft") or base.get("draft", ""),
+                     "reference": base.get("original", ""),
+                     "direct": r.get("direct"), "polish": r.get("polish")})
+
+    mat = duel.win_matrix(llm, rows, tuple(arms_text), sample=args.sample)
+    print("\n胜率矩阵（行 vs 列；0.5=打平）\n")
+    head = "{:<11s}".format("") + "".join(f"{a:>11s}" for a in arms_text)
+    print(head)
+    for a in arms_text:
+        line = "{:<11s}".format(a)
+        for b in arms_text:
+            v = mat[a].get(b)
+            line += f"{('  —  ' if v is None else f'{v:.2f}'):>11s}"
+        print(line)
+    print(f"\n每对比较次数(正反各一次): {mat[arms_text[1]].get('_n', '?')}")
+    return 0
+
 
 def cmd_prompt(args: argparse.Namespace) -> int:
     if args.kind == "restyle":
@@ -258,6 +306,15 @@ def main(argv=None) -> int:
                    help="评委只跑 N 条抽样（契约校验仍跑全量）")
     p.add_argument("--only-arms", default="")
     p.set_defaults(func=cmd_eval)
+
+    p = sub.add_parser("duel", help="成对比较胜率（风格评测；绝对打分已证伪）")
+    p.add_argument("--name", required=False)
+    p.add_argument("--pairs", default=PAIRS)
+    p.add_argument("--arms", default="draft,direct,polish,reference")
+    p.add_argument("--sample", type=int, default=20)
+    p.add_argument("--calibrate", type=int, default=0,
+                   help="用官方 chosen/rejected 校准评委，传对数（建议 20）")
+    p.set_defaults(func=cmd_duel)
 
     p = sub.add_parser("prompt", help="打印契约/模板")
     p.add_argument("kind", choices=["restyle", "contract", "tags"])

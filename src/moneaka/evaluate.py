@@ -28,7 +28,11 @@ from . import prompts
 from .contract import check
 from .llm import LLM
 
-ARMS = ("reference", "direct", "polish")
+ARMS = ("draft", "reference", "direct", "polish")
+
+#: 只有「改写类」臂的 semantic 才有意义（草稿 vs 输出）。
+#: reference 拿自己当自己的草稿会得满分，没信息量；direct 看不到草稿，不该罚它。
+SEMANTIC_ARMS = ("polish",)
 
 
 @dataclass
@@ -67,7 +71,8 @@ class Embedder:
 # 批量打分
 # ---------------------------------------------------------------------------
 
-_ROW_RE = re.compile(r"(\d+)\s*[,，\t ]\s*([0-4])\s*[,，\t ]\s*([0-4])\s*$")
+_ROW_RE = re.compile(r"(\d+)\s*[,，\t ]\s*([0-4])\s*$")
+_ROW_RE2 = re.compile(r"(\d+)\s*[,，\t ]\s*([0-4])\s*[,，\t ]\s*([0-4])\s*$")
 
 
 def _stable_hash(key: str) -> int:
@@ -76,29 +81,78 @@ def _stable_hash(key: str) -> int:
     return int(hashlib.md5(key.encode()).hexdigest()[:8], 16)
 
 
-def parse_batch_scores(text: str) -> dict[int, tuple[int, int]]:
-    """从批量输出里抠出 ``idx,semantic,style``。宽容：允许 # / 空格 / 中文逗号 / 箭号。
+def parse_batch_scores(text: str, ncols: int = 2) -> dict[int, tuple[int, int]]:
+    """从批量输出里抠出 ``idx,分1[,分2]``。宽容：允许 # / 空格 / 中文逗号 / 箭号。
 
-    逐行解析，不用「整体匹配失败才回退」的写法——真输出常常是部分规范、
-    部分带前缀（如 ``编号: 4 -> 2,1``），整体回退会丢掉这些行。
+    ``ncols=1``（盲评风格）时第二列重复为 0，方便统一调用方。
     """
     out: dict[int, tuple[int, int]] = {}
     for line in text.splitlines():
-        m = _ROW_RE.search(line)
+        m = (_ROW_RE if ncols == 1 else _ROW_RE2).search(line)
         if m:
-            out[int(m.group(1))] = (int(m.group(2)), int(m.group(3)))
+            idx = int(m.group(1))
+            if ncols == 1:
+                out[idx] = (int(m.group(2)), -1)
+            else:
+                out[idx] = (int(m.group(2)), int(m.group(3)))
             continue
         nums = re.findall(r"\b([0-9])\b", line)
-        if len(nums) == 3:
+        if ncols == 1 and len(nums) == 2:
+            out[int(nums[0])] = (int(nums[1]), -1)
+        elif ncols == 2 and len(nums) == 3:
             out[int(nums[0])] = (int(nums[1]), int(nums[2]))
     return out
 
 
 def judge_rows(llm: LLM, rows: list[dict], arm: str, *, batch_size: int = 8,
-               profile: str = "judge") -> dict[str, tuple[int, int]]:
-    """批量给一批 rows 的 ``arm`` 文本打分，返回 ``turn_id -> (semantic, style)``。"""
+               profile: str = "judge") -> dict[str, int]:
+    """**盲评**风格：只把文本本身交给评委，不告诉它草稿是什么。
+
+    为什么必须盲：一旦同时给草稿，评委就把「内容能不能接上」算进「像不像她」，
+    于是「照抄草稿 + 加个标签」也能拿高分。实测那版 polish 与草稿逐字相同的有 23/60，
+    却拿了 style 3.30——那个分不是风格分。
+
+    返回 ``turn_id -> style``。
+    """
     items = [(i + 1, r) for i, r in enumerate(rows) if (r.get(arm) or "").strip()]
-    scores: dict[str, tuple[int, int]] = {}
+    scores: dict[str, int] = {}
+    missing: list[tuple[int, dict]] = []
+    for start in range(0, len(items), batch_size):
+        batch = items[start:start + batch_size]
+        body = "\n\n".join(prompts.judge_voice_item(i, r.get("user", ""), r[arm]) for i, r in batch)
+        try:
+            raw = llm.complete(profile, prompts.JUDGE_VOICE_BATCH_SYSTEM,
+                               prompts.JUDGE_VOICE_BATCH_USER.format(items=body, n=len(batch)),
+                               temperature=0.0, max_tokens=12 * len(batch) + 40)
+            parsed = parse_batch_scores(raw, ncols=1)
+        except Exception as exc:
+            print(f"  ! 盲评批次失败 ({len(batch)} 条): {str(exc)[:100]}")
+            missing.extend(batch)
+            continue
+        for i, r in batch:
+            if i in parsed:
+                scores[r["turn_id"]] = parsed[i][0]
+            else:
+                missing.append((i, r))
+    for i, r in missing:
+        try:
+            raw = llm.complete(profile, prompts.JUDGE_VOICE_BATCH_SYSTEM,
+                               prompts.JUDGE_VOICE_BATCH_USER.format(
+                                   items=prompts.judge_voice_item(i, r.get("user", ""), r[arm]), n=1),
+                               temperature=0.0, max_tokens=48)
+            one = parse_batch_scores(raw, ncols=1)
+            if one:
+                scores[r["turn_id"]] = (one.get(i) or next(iter(one.values())))[0]
+        except Exception as exc:
+            print(f"  ! {r['turn_id']} 补评失败: {str(exc)[:80]}")
+    return scores
+
+
+def judge_semantic_rows(llm: LLM, rows: list[dict], arm: str, *, batch_size: int = 8,
+                        profile: str = "judge") -> dict[str, int]:
+    """语义保持度：草稿 vs 待审文本。只有**改写类**臂（polish）才有意义。"""
+    items = [(i + 1, r) for i, r in enumerate(rows) if (r.get(arm) or "").strip()]
+    scores: dict[str, int] = {}
     missing: list[tuple[int, dict]] = []
     for start in range(0, len(items), batch_size):
         batch = items[start:start + batch_size]
@@ -106,31 +160,28 @@ def judge_rows(llm: LLM, rows: list[dict], arm: str, *, batch_size: int = 8,
         try:
             raw = llm.complete(profile, prompts.JUDGE_BATCH_SYSTEM,
                                prompts.JUDGE_BATCH_USER.format(items=body, n=len(batch)),
-                               temperature=0.0, max_tokens=30 * len(batch) + 60)
-            parsed = parse_batch_scores(raw)
+                               temperature=0.0, max_tokens=12 * len(batch) + 40)
+            parsed = parse_batch_scores(raw, ncols=2)
         except Exception as exc:
-            print(f"  ! 批量评委失败 ({len(batch)} 条): {str(exc)[:100]}")
+            print(f"  ! 语义批次失败 ({len(batch)} 条): {str(exc)[:100]}")
             missing.extend(batch)
             continue
         for i, r in batch:
             if i in parsed:
-                scores[r["turn_id"]] = parsed[i]
+                scores[r["turn_id"]] = parsed[i][0]
             else:
                 missing.append((i, r))
-    # 漏掉的逐条补打分：批量输出偶尔会漏行/编号错位，不能当成「没分」混过去
     for i, r in missing:
         try:
             raw = llm.complete(profile, prompts.JUDGE_BATCH_SYSTEM,
                                prompts.JUDGE_BATCH_USER.format(
                                    items=prompts.judge_batch_item(i, r["draft"], r[arm]), n=1),
-                               temperature=0.0, max_tokens=90)
-            one = parse_batch_scores(raw)
-            if i in one:
-                scores[r["turn_id"]] = one[i]
-            elif len(one) == 1:
-                scores[r["turn_id"]] = next(iter(one.values()))
+                               temperature=0.0, max_tokens=48)
+            one = parse_batch_scores(raw, ncols=2)
+            if one:
+                scores[r["turn_id"]] = (one.get(i) or next(iter(one.values())))[0]
         except Exception as exc:
-            print(f"  ! {r['turn_id']} 补打分失败: {str(exc)[:80]}")
+            print(f"  ! {r['turn_id']} 补评失败: {str(exc)[:80]}")
     return scores
 
 # ---------------------------------------------------------------------------
@@ -146,14 +197,17 @@ def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
     这样三臂判的是同一批样本，也能重跑复现。
     """
     rows = list(rows)
-    marks: dict[str, tuple[int, int]] = {}
+    style: dict[str, int] = {}
+    sem: dict[str, int] = {}
     if judge:
         if sample and sample < len(rows):
             ordered = sorted(rows, key=lambda r: _stable_hash(r["turn_id"]))
             sub = ordered[:sample]
         else:
             sub = rows
-        marks = judge_rows(llm, sub, arm, batch_size=batch_size)
+        style = judge_rows(llm, sub, arm, batch_size=batch_size)
+        if arm in SEMANTIC_ARMS:
+            sem = judge_semantic_rows(llm, sub, arm, batch_size=batch_size)
     out: list[Scored] = []
     for r in rows:
         text = r.get(arm) or ""
@@ -163,8 +217,10 @@ def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
             contract_ok=res.ok, violations=[str(v) for v in res.violations],
             cjk_punct_ratio=res.cjk_punct_ratio,
         )
-        if r["turn_id"] in marks:
-            s.semantic, s.style = marks[r["turn_id"]]
+        if r["turn_id"] in style:
+            s.style = style[r["turn_id"]]
+        if r["turn_id"] in sem:
+            s.semantic = sem[r["turn_id"]]
         if embedder and text and r.get("original"):
             from .restyle import strip_tagged
             try:

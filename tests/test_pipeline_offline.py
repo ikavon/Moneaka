@@ -13,6 +13,9 @@ import pytest
 from moneaka import destyle as destyle_mod, evaluate, restyle
 from moneaka.llm import load_jsonl
 
+def _join(parts):  # 批量评委的假回包要按行拼接
+    return "\n".join(parts)
+
 
 class FakeLLM:
     """按 profile 分派的假端点。"""
@@ -108,9 +111,12 @@ def test_destyle_then_polish_then_eval(tmp_path, tiny_source, monkeypatch):
     for arm in evaluate.ARMS:
         scored += evaluate.score_arm(llm, rows, arm, embedder=None, judge=True)
     agg = evaluate.summarize(scored)
-    assert set(agg) == {"reference", "direct", "polish"}
+    assert set(agg) == {"draft", "reference", "direct", "polish"}
     for a in agg.values():
-        assert a["semantic_mean"] == 4 and a["style_mean"] == 4
+        assert a["style_mean"] == 4
+    # 只有改写类臂（polish）有 semantic；其它臂拿自己当草稿会白得满分
+    assert agg["polish"]["semantic_mean"] == 4
+    assert agg["direct"]["semantic_mean"] is None
 
     out = evaluate.write_report(str(tmp_path / "run"), scored, agg, [], pairs)
     assert os.path.isfile(out)
@@ -143,17 +149,35 @@ def test_parse_batch_scores_is_tolerant():
 
 
 def test_judge_rows_batches_and_maps_by_id():
-    from moneaka.evaluate import judge_rows
+    from moneaka.evaluate import judge_semantic_rows
 
     class BatchLLM(FakeLLM):
+        """如实回显传进来的编号（模拟可靠模型）。"""
+
         def complete(self, profile, system, user, **kw):
-            n = user.count("#")
-            return "\n".join(f"{i + 1},4,3" for i in range(n))
+            idents = re.findall(r"^#(\d+)$", user, re.M)
+            return _join(f"{i},4,3" for i in idents)
 
     rows = [{"turn_id": f"t{i}", "draft": "草稿", "polish": "结果"} for i in range(5)]
-    marks = judge_rows(BatchLLM(), rows, "polish batch", batch_size=2) if False else \
-            judge_rows(BatchLLM(), rows, "polish", batch_size=2)
-    assert marks == {f"t{i}": (4, 3) for i in range(5)}
+    marks = judge_semantic_rows(BatchLLM(), rows, "polish", batch_size=2)
+    assert marks == {f"t{i}": 4 for i in range(5)}
+
+
+def test_blind_style_judge_never_sees_draft():
+    """盲评风格必须不把草稿交给评委，否则分数被「内容相关性」污染。"""
+    from moneaka.evaluate import judge_rows
+
+    seen: list[str] = []
+
+    class SpyLLM(FakeLLM):
+        def complete(self, profile, system, user, **kw):
+            seen.append(user)
+            idents = re.findall(r"^#(\d+)$", user, re.M)
+            return _join(f"{i},3" for i in idents)
+
+    rows = [{"turn_id": "t0", "draft": "草稿内容AAA", "polish": "[微笑]结果"}]
+    judge_rows(SpyLLM(), rows, "polish", batch_size=4)
+    assert seen and all("草稿内容AAA" not in u for u in seen)
 
 
 def test_judge_sample_is_deterministic_and_scoped():
