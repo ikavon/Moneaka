@@ -17,19 +17,21 @@ from .contract import TAG_RE
 def polish(llm: LLM, draft: str, *, profile: str = "restyle", model: str | None = None) -> str:
     text = llm.complete(profile, prompts.restyle_system(),
                         prompts.RESTYLE_USER.format(draft=draft),
-                        **( {"model": model} if model else {}))
+                        **({"model": model} if model else {}))
     # 润色器不许输出外壳：去掉可能的「改写：」前缀与包裹引号
-    text = text.strip().strip('"\'')
-    return text
+    return text.strip().strip('"\'')
 
 
 def direct(llm: LLM, user_msg: str, context: list[dict] | None = None,
            *, profile: str = "restyle", model: str | None = None,
-           system: str | None = None) -> str:
+           system: str | None = None, temperature: float = 0.0) -> str:
     """按官方骨架 prompt 直接扮演（对照组）。system 默认取数据里的骨架原文。
 
     ``profile`` 决定是谁在演：本地小模型（衡量「润色器 vs 小模型自己演」）
     或强模型（衡量「润色器 vs 通用大模型直接上」）——后者才是真正的竞品。
+
+    ``temperature`` 默认 0：对照组是**基准线**，两次生成不同会让 style 分
+    飘 0.5 左右（实测 2.2 vs 2.7，0/60 条相同），那就没法比较了。
     """
     sys_txt = system if system is not None else corpus.skeleton_prompt()
     msgs = [{"role": "system", "content": sys_txt}]
@@ -37,7 +39,10 @@ def direct(llm: LLM, user_msg: str, context: list[dict] | None = None,
         if m["role"] in ("user", "assistant") and m["content"] != user_msg:
             msgs.append({"role": m["role"], "content": m["content"]})
     msgs.append({"role": "user", "content": user_msg})
-    return llm.chat(profile, msgs, **( {"model": model} if model else {}))
+    overrides = {"temperature": temperature}
+    if model:
+        overrides["model"] = model
+    return llm.chat(profile, msgs, **overrides)
 
 
 def strip_tagged(text: str) -> str:

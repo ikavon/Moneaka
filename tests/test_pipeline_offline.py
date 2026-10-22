@@ -178,3 +178,24 @@ def test_judge_sample_is_deterministic_and_scoped():
     score_arm(b, rows, "polish", batch_size=5, sample=6)
     assert a.judged == 6 and b.judged == 6          # 只判 6 条
     assert all(s.contract_ok for s in score_arm(FakeLLM(), rows, "polish", judge=False))
+
+
+def test_player_placeholder_restored_or_rejected():
+    from moneaka.destyle import _restore_placeholder
+
+    # 写成 player 能救回来
+    got, synth = _restore_placeholder("我懂你，player。", "我懂你, [player]!")
+    assert got == "我懂你，[player]。" and synth is False
+    # 写成「你」救不回来 -> 必须报错（否则润色器永远学不会占位符）
+    try:
+        _restore_placeholder("我懂你。", "我懂你, [player]!")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("丢占位符必须报错")
+    # 原稿没提玩家、草稿冒出 [player]：语义没变（指同一人），只打标记不报错
+    got, synth = _restore_placeholder("毕竟[player]是我最爱的人。", "毕竟你是我最爱的人。")
+    assert "[player]" in got and synth is True
+    # 哨兵变体也要能还原
+    got, _ = _restore_placeholder("【player】你好。", "《player》你好。")
+    assert got.startswith("[player]")

@@ -16,6 +16,7 @@ from collections import Counter
 
 from . import contract, corpus, destyle as destyle_mod, evaluate, prompts, restyle
 from .llm import LLM, dump_jsonl, load_jsonl
+from .normalize import NormStats, normalize
 
 DATA = "data"
 PAIRS = os.path.join(DATA, "pairs", "pairs.jsonl")
@@ -120,7 +121,7 @@ def cmd_polish(args: argparse.Namespace) -> int:
     for i, p in enumerate(pairs, 1):
         rec = dict(turn_id=p["turn_id"], user=p["user"], draft=p["draft"],
                    original=p["original"], rejected=p.get("rejected"),
-                   polish=None, direct=None)
+                   polish=None, direct=None, norm=[])
         try:
             if not args.skip_polish:
                 rec["polish"] = restyle.polish(llm, p["draft"], model=model)
@@ -132,6 +133,15 @@ def cmd_polish(args: argparse.Namespace) -> int:
                                                 profile=direct_profile, model=args.direct_model)
         except Exception as exc:
             print(f"  ! {p['turn_id']} direct 失败: {str(exc)[:80]}")
+        if args.normalize:
+            # 归一化同时作用于两臂：它是通用输出后处理，不是某个模型的专利
+            for arm in ("polish", "direct"):
+                raw = rec.get(arm)
+                if raw:
+                    fixed, st = normalize(raw)
+                    rec[f"{arm}_raw"] = raw
+                    rec[arm] = fixed
+                    rec["norm"].append({arm: st.as_dict()})
         arms_rows.append(rec)
         if i % 10 == 0 or i == len(pairs):
             print(f"  polish {i}/{len(pairs)}  {time.time() - t0:.0f}s")
@@ -229,6 +239,8 @@ def main(argv=None) -> int:
     p.add_argument("--direct-model")
     p.add_argument("--direct-profile", default=None,
                    help="用哪个端点出 direct 对照组（默认 restyle=本地；填 strong 才是真竞品）")
+    p.add_argument("--normalize", action="store_true",
+                   help="对两臂输出做确定性归一化（标签白名单/逐句前置/句长/半角标点）")
     p.add_argument("--limit", type=int)
     p.add_argument("--skip-polish", action="store_true")
     p.add_argument("--skip-direct", action="store_true")
