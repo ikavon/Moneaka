@@ -56,6 +56,11 @@ _TAG_START_RE = re.compile(r"(?=\[[^\[\]\n]{1,8}\])")
 
 #: 骨架语域用 ASCII 标点（后端 key_replace 会把中文标点转成 ASCII）。
 
+#: 中文标点。DAA4 输出里出现率 **0%**（后端 key_replace 会把中文标点转成 ASCII），
+#: 所以这**不当硬约束**（后端反正会转），只作为一个风格诊断分：
+#: 大量全角标点的输出往往就是「通用 LLM 味」。
+_CJK_PUNCT_RE = re.compile(r"[，。！？；：、]")
+
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
@@ -135,6 +140,7 @@ class CheckResult:
     unknown_tags: tuple[str, ...] = ()
     max_sentence_chars: int = 0
     total_chars: int = 0
+    cjk_punct_ratio: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -150,6 +156,7 @@ class CheckResult:
             "unknown_tags": list(self.unknown_tags),
             "max_sentence_chars": self.max_sentence_chars,
             "total_chars": self.total_chars,
+            "cjk_punct_ratio": self.cjk_punct_ratio,
         }
 
 
@@ -196,6 +203,10 @@ def check(text: str, *, strict_tags: bool = True) -> CheckResult:
             )
 
     res.max_sentence_chars = longest
+
+    enders = len(re.findall(r"[.!?~…]", sentence_body(text)))
+    if enders:
+        res.cjk_punct_ratio = round(len(_CJK_PUNCT_RE.findall(text)) / enders, 3)
 
     if not _CJK_RE.search(text):
         res.violations.append(Violation("no_cjk", "输出里没有中文字符"))

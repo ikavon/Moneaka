@@ -45,6 +45,9 @@ class Profile:
     model: str
     temperature: float = 0.7
     max_tokens: int = 512
+    backend: str = "openai"
+    load_in_4bit: bool = False
+    enable_thinking: bool = False
     extra: dict = field(default_factory=dict)
 
 
@@ -88,8 +91,12 @@ class LLM:
             model=_expand(raw.get("model", "")) or "",
             temperature=float(_expand(raw.get("temperature", 0.7))),
             max_tokens=int(_expand(raw.get("max_tokens", 512))),
-            extra={k: _expand(v) for k, v in raw.items()
-                   if k not in ("base_url", "api_key", "model", "temperature", "max_tokens")},
+            backend=_expand(raw.get("backend", "openai")) or "openai",
+            load_in_4bit=bool(_expand(raw.get("load_in_4bit", False))),
+            enable_thinking=bool(_expand(raw.get("enable_thinking", False))),
+            extra={k: _expand(v) for k, v in raw.items() if k not in (
+                "base_url", "api_key", "model", "temperature", "max_tokens",
+                "backend", "load_in_4bit", "enable_thinking")},
         )
         self._profiles[name] = prof
         return prof
@@ -111,6 +118,9 @@ class LLM:
     ) -> str:
         """一次非流式补全。``overrides`` 可覆盖 model/temperature/max_tokens。"""
         prof = self.profile(profile)
+        if prof.backend == "hf":
+            return self._chat_hf(prof, messages, **overrides)
+
         kw: dict[str, Any] = dict(
             model=overrides.pop("model", None) or prof.model,
             messages=messages,
@@ -133,6 +143,21 @@ class LLM:
                 if i + 1 < attempts:
                     time.sleep(1.5 * (i + 1))
         raise RuntimeError(f"[{profile}] 调用失败: {last}") from last
+
+    def _chat_hf(self, prof: Profile, messages: list[dict[str, str]],
+                 **overrides: Any) -> str:
+        """本地 HF 后端：不联网、进程内单例加载。"""
+        from .localhf import GenConfig, get_model
+
+        model_id = overrides.pop("model", None) or prof.model
+        if not model_id:
+            raise ValueError(f"endpoint {prof.name!r} 是 hf 后端但没配 model")
+        cfg = GenConfig(
+            max_new_tokens=int(overrides.pop("max_tokens", prof.max_tokens)),
+            temperature=float(overrides.pop("temperature", prof.temperature)),
+        )
+        model = get_model(model_id, load_in_4bit=prof.load_in_4bit)
+        return model.chat(messages, cfg=cfg, enable_thinking=prof.enable_thinking)
 
     def complete(self, profile: str, system: str, user: str, **overrides: Any) -> str:
         return self.chat(profile, [{"role": "system", "content": system},

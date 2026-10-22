@@ -40,6 +40,7 @@ class Scored:
     semantic: int | None = None
     style: int | None = None
     cos_ref: float | None = None
+    cjk_punct_ratio: float = 0.0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -74,6 +75,7 @@ def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
         s = Scored(
             turn_id=r["turn_id"], arm=arm, text=text,
             contract_ok=res.ok, violations=[str(v) for v in res.violations],
+            cjk_punct_ratio=res.cjk_punct_ratio,
         )
         if judge and text:
             try:
@@ -111,6 +113,7 @@ def summarize(scored: list[Scored]) -> dict:
             "semantic_mean": _mean("semantic"),
             "style_mean": _mean("style"),
             "cos_ref_mean": _mean("cos_ref"),
+            "cjk_punct": round(statistics.mean([r.cjk_punct_ratio for r in rows]), 3),
         }
     return agg
 
@@ -138,11 +141,12 @@ def write_report(out_dir: str, scored: list[Scored], agg: dict,
 
     by_id = {p["turn_id"]: p for p in pairs}
     lines = ["# 阶段 0 评测\n",
-             "| arm | n | contract_pass | semantic | style | cos_ref |",
-             "|---|---|---|---|---|---|"]
+             "| arm | n | contract_pass | semantic | style | cos_ref | cjk_punct |",
+             "|---|---|---|---|---|---|---|"]
     for arm, a in agg.items():
         lines.append(f"| {arm} | {a['n']} | {a['contract_pass_rate']} | "
-                     f"{a['semantic_mean']} | {a['style_mean']} | {a['cos_ref_mean']} |")
+                     f"{a['semantic_mean']} | {a['style_mean']} | {a['cos_ref_mean']} | "
+                     f"{a['cjk_punct']} |")
     if ref_violations:
         lines.append("\n> ⚠️ 真数据（reference）也触发的违规码 = 校验阈值定错了，先修阈值再谈模型：")
         lines += [f"> - `{c}` × {n}" for c, n in ref_violations]
