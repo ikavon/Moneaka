@@ -94,9 +94,10 @@ class MaicaConfig:
                    timeout=float(os.getenv(f"{prefix}_TIMEOUT", "180")))
 
 
-#: 两次请求之间的最小间隔（秒）。官方服务是共享的，**不要连发**：
-#: 批量蒸馏时按这个节奏走，宁可慢。
-MIN_INTERVAL = float(os.getenv("MAICA_MIN_INTERVAL", "3.0"))
+#: 两次请求之间的最小间隔（秒）。官方服务是共享的，**不要连发**。
+#: 按用户要求：**最多一分钟一次**。这个值是下限，只能调大不能调小；
+#: 换算：20 条 ≈ 20 分钟，200 条 ≈ 3.3 小时，941 条 ≈ 16 小时。
+MIN_INTERVAL = float(os.getenv("MAICA_MIN_INTERVAL", "60.0"))
 _last_call = 0.0
 
 

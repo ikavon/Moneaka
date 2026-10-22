@@ -1,0 +1,38 @@
+
+=== 训练 dpo-a {'name': 'dpo-a', 'beta': 0.1, 'lr': 5e-06, 'epochs': 2} ===
+  训练返回码 0
+=== 评测 dpo-a ===
+  评测返回码 0
+
+=== 训练 dpo-b {'name': 'dpo-b', 'beta': 0.3, 'lr': 5e-06, 'epochs': 2} ===
+  训练返回码 0
+=== 评测 dpo-b ===
+  评测返回码 0
+
+=== 训练 dpo-c {'name': 'dpo-c', 'beta': 0.1, 'lr': 1e-05, 'epochs': 3} ===
+  训练返回码 0
+=== 评测 dpo-c ===
+  评测返回码 0
+
+=== 阶段 A 汇总（206 条留出，greedy）===
+           name    win             CI   sem  <=2
+ baseline(run8)  0.447    [0.4, 0.49]  3.59    -
+          dpo-a  0.383   [0.34, 0.43]  3.69   10
+          dpo-b   0.41   [0.36, 0.46]   3.7   10
+          dpo-c  0.386   [0.34, 0.43]  3.69   14
+
+写入 D:\Python_projects\Moneaka\data\sweep\dpo_phase_summary.json
+
+=== 按 docs/PLAN_NEXT.md A.3 判定 ===
+  dpo-a: 未通过
+      ✓ sem 3.69 >= 3.64
+      ✗ win 0.383 >= 0.40
+      ✓ contract 1.0
+  dpo-b: 通过 ✅
+      ✓ sem 3.7 >= 3.64
+      ✓ win 0.41 >= 0.40
+      ✓ contract 1.0
+  dpo-c: 未通过
+      ✓ sem 3.69 >= 3.64
+      ✗ win 0.386 >= 0.40
+      ✓ contract 1.0

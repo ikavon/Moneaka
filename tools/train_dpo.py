@@ -28,7 +28,7 @@ os.environ.setdefault("HF_HOME", str(ROOT / "data" / "models"))
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 sys.path.insert(0, str(ROOT / "src"))
 
-from moneaka import dataset, negatives  # noqa: E402
+from moneaka import dataset, negatives, prompts  # noqa: E402
 
 
 def merge_sft(base: str, adapter: str, out_dir: str) -> str:
@@ -82,6 +82,8 @@ def main() -> int:
     ap.add_argument("--out", default="data/adapters/dpo1")
     ap.add_argument("--merged", default="data/models/Qwen3-1.7B-sft-merged")
     ap.add_argument("--axes", default="tags,order,merge,flatten")
+    ap.add_argument("--pref-file", default=None,
+                    help="直接用挖好的负例对（tools/mine_drift.py 的产出），忽略 --axes")
     ap.add_argument("--epochs", type=float, default=1.0)
     ap.add_argument("--beta", type=float, default=0.1)
     ap.add_argument("--lr", type=float, default=5e-5)
@@ -105,7 +107,23 @@ def main() -> int:
     if args.smoke:
         train_s = train_s[:24]
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
-    rows = build_pref_rows(train_s, axes, seed=args.seed)
+    if args.pref_file:
+        # on-policy 模式：负例是模型自己生成、经语义评委判为漂移的输出。
+        # 这里的 prompt 必须与 SFT 训练时逐字一致（system + 表达指令），
+        # 否则模型会先学「换了输入格式」再学「别改事实」。
+        sys_prompt = prompts.restyle_system(few_shot=False)
+        rows = []
+        for r in map(json.loads, open(args.pref_file, encoding="utf-8")):
+            rows.append({"prompt": [{"role": "system", "content": sys_prompt},
+                                    {"role": "user", "content": r["plan"]}],
+                         "chosen": [{"role": "assistant", "content": r["chosen"]}],
+                         "rejected": [{"role": "assistant", "content": r["rejected"]}],
+                         "axis": "semantic", "turn_id": r["turn_id"]})
+        for r in rows:
+            if not r["chosen"][0]["content"] or not r["rejected"][0]["content"]:
+                raise SystemExit("chosen/rejected 有空串，检查 pref-file")
+    else:
+        rows = build_pref_rows(train_s, axes, seed=args.seed)
     per_axis: dict[str, int] = {}
     for r in rows:
         per_axis[r["axis"]] = per_axis.get(r["axis"], 0) + 1
@@ -148,10 +166,6 @@ def main() -> int:
         seed=args.seed,
         report_to=[],
     )
-    trainer = DPOTrainer(
-        model=loaded, args=cfg, train_dataset=ds, peft_config=lora,
-        processing_class=tok,
-    )
     # 自己载入并搬到 cuda，**不要用 device_map**：DPOTrainer 给 ref model 建 PEFT
     # "ref" adapter 时，accelerate 的分片加载会让一部分权重停在 meta device 上，
     # 反向传播直接炸 "expected device meta but got cuda:0"（实测冒烟复现）。
@@ -159,6 +173,10 @@ def main() -> int:
     loaded = AutoModelForCausalLM.from_pretrained(merged, dtype=torch.bfloat16,
                                                   trust_remote_code=True).to("cuda")
     loaded.config.use_cache = False
+    trainer = DPOTrainer(
+        model=loaded, args=cfg, train_dataset=ds, peft_config=lora,
+        processing_class=tok,
+    )
 
     print("DPO 开训…")
     res = trainer.train()

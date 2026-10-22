@@ -1,0 +1,56 @@
+[
+ {
+  "name": "baseline(run8)",
+  "win": 0.447,
+  "sem": 3.59,
+  "ci": [
+   0.4,
+   0.49
+  ],
+  "contract": 1.0
+ },
+ {
+  "name": "dpo-a",
+  "win": 0.383,
+  "sem": 3.69,
+  "ci": [
+   0.34,
+   0.43
+  ],
+  "contract": 1.0,
+  "sem_low": 10
+ },
+ {
+  "name": "dpo-b",
+  "win": 0.41,
+  "sem": 3.7,
+  "ci": [
+   0.36,
+   0.46
+  ],
+  "contract": 1.0,
+  "sem_low": 10
+ },
+ {
+  "name": "dpo-c",
+  "win": 0.386,
+  "sem": 3.69,
+  "ci": [
+   0.34,
+   0.43
+  ],
+  "contract": 1.0,
+  "sem_low": 14
+ },
+ {
+  "name": "dpo-d",
+  "win": 0.408,
+  "sem": 3.68,
+  "ci": [
+   0.36,
+   0.46
+  ],
+  "contract": 1.0,
+  "sem_low": 15
+ }
+]

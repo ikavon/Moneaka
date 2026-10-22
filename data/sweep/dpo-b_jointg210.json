@@ -1,0 +1,21 @@
+{
+ "rows": [
+  {
+   "run": "pickg210_dpo-b_final",
+   "n": 206,
+   "contract": 1.0,
+   "win": 0.41,
+   "win_ci": [
+    0.36,
+    0.46
+   ],
+   "sem": 3.7,
+   "sem_low": 10,
+   "sem_n": 206,
+   "unparsed": 0,
+   "checkpoint": "dpo-b"
+  }
+ ],
+ "best": "dpo-b",
+ "sem_floor": 3.55
+}
