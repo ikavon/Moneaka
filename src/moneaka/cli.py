@@ -170,7 +170,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
             continue
         print(f"  评分: {arm}")
         scored += evaluate.score_arm(llm, rows, arm, embedder=embedder,
-                                     judge=not args.no_judge)
+                                     judge=not args.no_judge,
+                                     batch_size=args.judge_batch)
 
     agg = evaluate.summarize(scored)
     ref_viol = evaluate.violation_census(scored)
@@ -231,6 +232,8 @@ def main(argv=None) -> int:
     p.add_argument("--embed", action="store_true")
     p.add_argument("--embed-model", default="paraphrase-multilingual-MiniLM-L12-v2")
     p.add_argument("--no-judge", action="store_true")
+    p.add_argument("--judge-batch", type=int, default=8,
+                   help="批量评委每批条数（默认 8；TPM 紧就调小）")
     p.add_argument("--only-arms", default="")
     p.set_defaults(func=cmd_eval)
 

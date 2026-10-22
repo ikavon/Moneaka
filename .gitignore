@@ -9,3 +9,4 @@ data/pairs/
 data/runs/
 data/models/
 docs/raw/*.txt
+configs/private.yaml

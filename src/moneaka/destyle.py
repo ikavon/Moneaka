@@ -27,7 +27,11 @@ def destyle_one(llm: LLM, original: str) -> str:
                         prompts.DESTYLE_USER.format(original=original))
     # 去风格化必须干净：残留的 [标签] 会让润色器误以为标签属于语义内容
     from .contract import TAG_RE
-    return TAG_RE.sub("", text).strip()
+    text = TAG_RE.sub("", text).strip()
+    # 空/过短的草稿是无用的训练输入，它会让润色器学会「凭空生成内容」
+    if len(text) < 4:
+        raise ValueError(f"草稿过短或为空: {text!r}")
+    return text
 
 
 def run(profile_llm: LLM | None = None, limit: int | None = None,
@@ -66,5 +70,7 @@ def run(profile_llm: LLM | None = None, limit: int | None = None,
 
     rows = [r for r in rows if r]
     dump_jsonl(out_path, rows)
-    log(f"写入 {out_path}（{len(rows)} 对）")
+    log(f"写入 {out_path}（{len(rows)}/{len(turns)} 对）")
+    if len(rows) < len(turns):
+        log(f"⚠️ 有 {len(turns) - len(rows)} 条没造出草稿（见上方 ! 行），不加 --limit 重跑会补齐")
     return rows

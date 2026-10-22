@@ -6,6 +6,7 @@
 
 import json
 import os
+import re
 
 import pytest
 
@@ -30,6 +31,9 @@ class FakeLLM:
             return TAG_RE.sub("", user.replace("原文:", "")).replace("嘿嘿", "").strip()
         if profile == "restyle":
             return "[微笑]当然愿意了, 那我们一起去躲雨吧."
+        if profile == "judge":
+            idents = re.findall(r"^#(\d+)$", user, re.M)
+            return "\n".join(f"{i},4,4" for i in idents)
         return ""
 
     def chat(self, profile, messages, **kw):
@@ -129,3 +133,24 @@ def test_bad_polish_is_caught_by_contract(tmp_path):
     # 对照组：通用模型直接输出的平实话，会被判缺标签——这正是润色器存在的理由
     scored2 = evaluate.score_arm(FakeLLM(), rows, "direct", judge=False)
     assert not scored2[0].contract_ok
+
+
+def test_parse_batch_scores_is_tolerant():
+    from moneaka.evaluate import parse_batch_scores
+    txt = "#1,4,3\n2,3,4\n 3，3，3\n编号: 4 -> 2,1\nnoise line"
+    got = parse_batch_scores(txt)
+    assert got[1] == (4, 3) and got[2] == (3, 4) and got[3] == (3, 3) and got[4] == (2, 1)
+
+
+def test_judge_rows_batches_and_maps_by_id():
+    from moneaka.evaluate import judge_rows
+
+    class BatchLLM(FakeLLM):
+        def complete(self, profile, system, user, **kw):
+            n = user.count("#")
+            return "\n".join(f"{i + 1},4,3" for i in range(n))
+
+    rows = [{"turn_id": f"t{i}", "draft": "草稿", "polish": "结果"} for i in range(5)]
+    marks = judge_rows(BatchLLM(), rows, "polish batch", batch_size=2) if False else \
+            judge_rows(BatchLLM(), rows, "polish", batch_size=2)
+    assert marks == {f"t{i}": (4, 3) for i in range(5)}

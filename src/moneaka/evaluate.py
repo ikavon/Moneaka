@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import statistics
 from dataclasses import asdict, dataclass, field
 from typing import Iterable
@@ -63,11 +64,78 @@ class Embedder:
 
 
 # ---------------------------------------------------------------------------
-# 打分
+# 批量打分
+# ---------------------------------------------------------------------------
+
+_ROW_RE = re.compile(r"(\d+)\s*[,，\t ]\s*([0-4])\s*[,，\t ]\s*([0-4])\s*$")
+
+
+def parse_batch_scores(text: str) -> dict[int, tuple[int, int]]:
+    """从批量输出里抠出 ``idx,semantic,style``。宽容：允许 # / 空格 / 中文逗号 / 箭号。
+
+    逐行解析，不用「整体匹配失败才回退」的写法——真输出常常是部分规范、
+    部分带前缀（如 ``编号: 4 -> 2,1``），整体回退会丢掉这些行。
+    """
+    out: dict[int, tuple[int, int]] = {}
+    for line in text.splitlines():
+        m = _ROW_RE.search(line)
+        if m:
+            out[int(m.group(1))] = (int(m.group(2)), int(m.group(3)))
+            continue
+        nums = re.findall(r"\b([0-9])\b", line)
+        if len(nums) == 3:
+            out[int(nums[0])] = (int(nums[1]), int(nums[2]))
+    return out
+
+
+def judge_rows(llm: LLM, rows: list[dict], arm: str, *, batch_size: int = 8,
+               profile: str = "judge") -> dict[str, tuple[int, int]]:
+    """批量给一批 rows 的 ``arm`` 文本打分，返回 ``turn_id -> (semantic, style)``。"""
+    items = [(i + 1, r) for i, r in enumerate(rows) if (r.get(arm) or "").strip()]
+    scores: dict[str, tuple[int, int]] = {}
+    missing: list[tuple[int, dict]] = []
+    for start in range(0, len(items), batch_size):
+        batch = items[start:start + batch_size]
+        body = "\n\n".join(prompts.judge_batch_item(i, r["draft"], r[arm]) for i, r in batch)
+        try:
+            raw = llm.complete(profile, prompts.JUDGE_BATCH_SYSTEM,
+                               prompts.JUDGE_BATCH_USER.format(items=body, n=len(batch)),
+                               temperature=0.0, max_tokens=30 * len(batch) + 60)
+            parsed = parse_batch_scores(raw)
+        except Exception as exc:
+            print(f"  ! 批量评委失败 ({len(batch)} 条): {str(exc)[:100]}")
+            missing.extend(batch)
+            continue
+        for i, r in batch:
+            if i in parsed:
+                scores[r["turn_id"]] = parsed[i]
+            else:
+                missing.append((i, r))
+    # 漏掉的逐条补打分：批量输出偶尔会漏行/编号错位，不能当成「没分」混过去
+    for i, r in missing:
+        try:
+            raw = llm.complete(profile, prompts.JUDGE_BATCH_SYSTEM,
+                               prompts.JUDGE_BATCH_USER.format(
+                                   items=prompts.judge_batch_item(i, r["draft"], r[arm]), n=1),
+                               temperature=0.0, max_tokens=90)
+            one = parse_batch_scores(raw)
+            if i in one:
+                scores[r["turn_id"]] = one[i]
+            elif len(one) == 1:
+                scores[r["turn_id"]] = next(iter(one.values()))
+        except Exception as exc:
+            print(f"  ! {r['turn_id']} 补打分失败: {str(exc)[:80]}")
+    return scores
+
+# ---------------------------------------------------------------------------
+# 打分（逐条）
 # ---------------------------------------------------------------------------
 
 def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
-              embedder: Embedder | None = None, judge: bool = True) -> list[Scored]:
+              embedder: Embedder | None = None, judge: bool = True,
+              batch_size: int = 8) -> list[Scored]:
+    rows = list(rows)
+    marks = judge_rows(llm, rows, arm, batch_size=batch_size) if judge else {}
     out: list[Scored] = []
     for r in rows:
         text = r.get(arm) or ""
@@ -77,16 +145,8 @@ def score_arm(llm: LLM, rows: Iterable[dict], arm: str, *,
             contract_ok=res.ok, violations=[str(v) for v in res.violations],
             cjk_punct_ratio=res.cjk_punct_ratio,
         )
-        if judge and text:
-            try:
-                s.semantic = llm.score("judge", prompts.JUDGE_SEMANTIC_SYSTEM,
-                                       prompts.JUDGE_SEMANTIC_USER.format(
-                                           draft=r["draft"], polished=text))
-                s.style = llm.score("judge", prompts.JUDGE_STYLE_SYSTEM,
-                                    prompts.JUDGE_STYLE_USER.format(
-                                        draft=r["draft"], polished=text))
-            except Exception as exc:
-                print(f"  ! {r['turn_id']} 评委失败: {exc}")
+        if r["turn_id"] in marks:
+            s.semantic, s.style = marks[r["turn_id"]]
         if embedder and text and r.get("original"):
             from .restyle import strip_tagged
             try:

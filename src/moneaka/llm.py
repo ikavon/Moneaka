@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,6 +28,9 @@ DEFAULT_CONFIG_PATH = os.path.join(
     "default.yaml",
 )
 
+#: 本地私密覆盖（不进 git）。只需改这个文件就能换端点/key/model。
+PRIVATE_CONFIG_PATH = os.path.join(os.path.dirname(DEFAULT_CONFIG_PATH), "private.yaml")
+
 
 def _expand(value: Any) -> Any:
     """支持 ``env:VAR`` 取值，以及 ``env:VAR:default`` 兜底。"""
@@ -35,6 +39,33 @@ def _expand(value: Any) -> Any:
         var, _, default = rest.partition(":")
         return os.environ.get(var, default or "")
     return value
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """递归合并：override 里的端点击中 base 时按键合并，不整块替换。"""
+    out = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+class EmptyResponse(RuntimeError):
+    """网关返回 200 但 content 为空。"""
+
+
+class TruncatedResponse(EmptyResponse):
+    """空回复且 finish_reason=length——思考型模型把 max_tokens 烧在推理上了。
+
+    这种不能无脑重试同一个上限，得把 max_tokens 提上去重试；
+    换非思考模型能直接避开（destyle/judge 这类机械任务不需要推理）。
+    """
+
+
+_THROTTLE_LOCK = threading.Lock()
+_LAST_CALL: dict[str, float] = {}
 
 
 @dataclass
@@ -48,6 +79,8 @@ class Profile:
     backend: str = "openai"
     load_in_4bit: bool = False
     enable_thinking: bool = False
+    #: 同一端点的最小调用间隔（秒）。限流严格的网关靠它把速率压下来。
+    min_interval: float = 0.0
     extra: dict = field(default_factory=dict)
 
 
@@ -63,14 +96,23 @@ class LLM:
 
     @staticmethod
     def _load_config(path: str) -> dict:
-        if not os.path.isfile(path):
-            return {}
+        """default.yaml 打底，private.yaml 覆盖（私密文件不进 git）。"""
         try:
             import yaml
         except Exception:
             return {}
-        with open(path, encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or {}
+
+        def read(p: str) -> dict:
+            if not os.path.isfile(p):
+                return {}
+            with open(p, encoding="utf-8") as fh:
+                return yaml.safe_load(fh) or {}
+
+        cfg = read(path)
+        private = PRIVATE_CONFIG_PATH
+        if os.path.abspath(private) != os.path.abspath(path):
+            cfg = _deep_merge(cfg, read(private))
+        return cfg
 
     def profile(self, name: str) -> Profile:
         if name in self._profiles:
@@ -94,9 +136,10 @@ class LLM:
             backend=_expand(raw.get("backend", "openai")) or "openai",
             load_in_4bit=bool(_expand(raw.get("load_in_4bit", False))),
             enable_thinking=bool(_expand(raw.get("enable_thinking", False))),
+            min_interval=float(_expand(raw.get("min_interval", 0.0)) or 0.0),
             extra={k: _expand(v) for k, v in raw.items() if k not in (
                 "base_url", "api_key", "model", "temperature", "max_tokens",
-                "backend", "load_in_4bit", "enable_thinking")},
+                "backend", "load_in_4bit", "enable_thinking", "min_interval")},
         )
         self._profiles[name] = prof
         return prof
@@ -132,17 +175,60 @@ class LLM:
         kw = {k: v for k, v in kw.items() if v not in (None, "")}
 
         client = self._client(prof)
-        attempts = int(kw.pop("attempts", 3))
+        attempts = int(kw.pop("attempts", 5))
         last: Exception | None = None
         for i in range(attempts):
+            self._throttle(prof)
             try:
-                resp = client.chat.completions.create(**kw)
-                return (resp.choices[0].message.content or "").strip()
+                resp = client.chat.completions.create(**self._with_body(kw))
+                text = (resp.choices[0].message.content or "").strip()
+                if not text:
+                    if resp.choices[0].finish_reason == "length":
+                        raise TruncatedResponse(
+                            f"max_tokens={kw.get('max_tokens')} 被推理吃光")
+                    raise EmptyResponse(
+                        f"空回复 (finish_reason={resp.choices[0].finish_reason})")
+                return text
+            except TruncatedResponse as exc:
+                last = exc
+                cur = int(kw.get("max_tokens") or 512)
+                kw["max_tokens"] = min(int(cur * 2), 8192)
+                if i + 1 < attempts:
+                    time.sleep(min(2 * (i + 1), 10))
+            except EmptyResponse as exc:
+                last = exc
+                if i + 1 < attempts:
+                    time.sleep(min(3 * 2 ** i, 30))
             except Exception as exc:  # 网络/限流/服务端抖动
                 last = exc
                 if i + 1 < attempts:
-                    time.sleep(1.5 * (i + 1))
+                    time.sleep(min(self._backoff(exc, i), 60))
         raise RuntimeError(f"[{profile}] 调用失败: {last}") from last
+
+    @staticmethod
+    def _with_body(kw: dict) -> dict:
+        """把 profile 里的 ``extra_body`` 子字典拆成 SDK 的 extra_body 参数。"""
+        body = kw.pop("extra_body", None)
+        if body:
+            kw["extra_body"] = body
+        return kw
+
+    def _throttle(self, prof: Profile) -> None:
+        """同一端点的最小调用间隔（跨线程共享）。"""
+        if prof.min_interval <= 0:
+            return
+        with _THROTTLE_LOCK:
+            wait = prof.min_interval - (time.monotonic() - _LAST_CALL.get(prof.name, 0.0))
+            if wait > 0:
+                time.sleep(wait)
+            _LAST_CALL[prof.name] = time.monotonic()
+
+    @staticmethod
+    def _backoff(exc: Exception, attempt: int) -> float:
+        """限流退避明显拉长，其它错误用常规指数退避。"""
+        text = str(exc).lower()
+        rate_limited = "429" in text or "rate limit" in text or "tpm" in text or "rpm" in text
+        return (15 if rate_limited else 1.5) * (2 ** attempt)
 
     def _chat_hf(self, prof: Profile, messages: list[dict[str, str]],
                  **overrides: Any) -> str:
