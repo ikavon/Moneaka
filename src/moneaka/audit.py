@@ -94,7 +94,13 @@ def needs_polish_audit(plan: str, polish: str) -> list[str]:
         why.append("含否定")
     if len(tags) >= 3:
         why.append("多段")
-    ratio = contract.cjk_len(polish) / max(1, contract.cjk_len(body))
+    # 注意：必须先把标签和占位符剥掉再数字数。原先直接 cjk_len(polish) 把
+    # 「[微笑]」里的「微笑」也算进去了，长度比被抬高，这条触发条件实际上从没生效过
+    # ——正是它漏掉了「plan 有 6 个字、台词只剩一个『嗯?』」那类塌缩。
+    def _plain(x: str) -> int:
+        return contract.cjk_len(contract.PLACEHOLDER_RE.sub("", contract.TAG_RE.sub("", x)))
+
+    ratio = _plain(polish) / max(1, _plain(body))
     if ratio < 0.55 or ratio > 2.2:
         why.append(f"长度比 {ratio:.2f}")
     return why
