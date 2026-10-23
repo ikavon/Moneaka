@@ -90,6 +90,8 @@ class TurnResult:
     error: str = ""
     #: 最终这一句是谁写的：polisher / literal
     final_source: str = "polisher"
+    #: 这一轮的内部记录，供下一轮交给编剧（agent 化的连续历史）
+    log_line: str = ""
 
     @property
     def ok(self) -> bool:
@@ -103,7 +105,8 @@ def literal(plan: str) -> str:
 
 
 def _plan_stage(rt: Runtime, cfg: TurnConfig, user: str,
-                history: list[dict] | None, res: TurnResult) -> None:
+                history: list[dict] | None, res: TurnResult,
+                log: list[str] | None = None) -> None:
     """编剧 + C。C 拦下的重写一次（把拦截原因回灌给编剧）。"""
     t0 = time.time()
     examples = rt.bank.search(user, k=cfg.bank_k) if rt.bank else None
@@ -111,7 +114,7 @@ def _plan_stage(rt: Runtime, cfg: TurnConfig, user: str,
     for round_ in (1, 2):
         try:
             got = screenwriter.make_plan(
-                rt.llm, user, history=history, examples=examples,
+                rt.llm, user, history=history, examples=examples, log=log,
                 tight=cfg.tight, nsfw=cfg.nsfw, retries=1)
         except Exception as exc:  # noqa: BLE001
             res.error = f"编剧失败: {str(exc)[:160]}"
@@ -137,6 +140,22 @@ def _plan_stage(rt: Runtime, cfg: TurnConfig, user: str,
         # 带着拦截原因重来一次：把它塞进用户消息，比改 system 更不容易被忽略
         user = user + f"\n\n（上一条表达指令被驳回：{hint}。请重写，规避该问题。）"
     res.timings["编剧"] = time.time() - t0
+
+
+def _log_line(res: TurnResult) -> str:
+    """一轮的压缩记录（一行），下一轮交给编剧看自己做过什么。"""
+    if res.error:
+        return f"- 上一轮「{res.user[:14]}」失败: {res.error[:30]}"
+    tags = " > ".join(res.tags) if res.tags else "?"
+    tail = []
+    if res.c_flags:
+        tail.append("审查驳回: " + res.c_flags[0][:24])
+    if res.degraded:
+        tail.append("退化为直译")
+    elif res.attempts:
+        tail.append(f"重写{res.attempts}次")
+    return (f"- 上一轮「{res.user[:14]}」你写的是 语气 {tags}"
+            f"（{len(res.contents)}段）；" + ("；".join(tail) if tail else "一次通过"))
 
 
 def _last_assistant(history: list[dict] | None) -> str | None:
@@ -216,7 +235,8 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
 
 
 def run_turn(rt: Runtime, cfg: TurnConfig, user: str,
-             history: list[dict] | None = None, on_stage=None) -> TurnResult:
+             history: list[dict] | None = None, on_stage=None,
+             log: list[str] | None = None) -> TurnResult:
     """走完一轮。``history`` 只给编剧看，润色器始终无状态。
 
     ``on_stage(name)`` 是给界面用的进度回调（CLI 不用），在每层开始时调用一次。
@@ -230,10 +250,11 @@ def run_turn(rt: Runtime, cfg: TurnConfig, user: str,
         res.error = "空输入"
         return res
     step("编剧")
-    _plan_stage(rt, cfg, user, history, res)
+    _plan_stage(rt, cfg, user, history, res, log=log)
     if res.error:
         return res
     step("润色 + 审查")
     _polish_stage(rt, cfg, res)
+    res.log_line = _log_line(res)
 
     return res

@@ -44,7 +44,10 @@ def init_state() -> None:
     if "turns" not in st.session_state:
         st.session_state.turns = []          # [{user, result, history}] 供回放
     if "history" not in st.session_state:
-        st.session_state.history = []        # 给编剧看的对话历史
+        st.session_state.history = []
+        st.session_state.log = []        # 给编剧看的对话历史
+    if "log" not in st.session_state:
+        st.session_state.log = []            # 编剧自己的决策轨迹（审查结论等）
 
 
 init_state()
@@ -87,6 +90,7 @@ with st.sidebar:
     if st.button("清空对话", icon=":material/delete:", width="stretch"):
         st.session_state.turns = []
         st.session_state.history = []
+        st.session_state.log = []
         st.rerun()
     if st.session_state.turns:
         dump = json.dumps([{"user": t["user"], **asdict_like(t["result"])}
@@ -151,7 +155,7 @@ if prompt:
 
             rt = load_runtime(base, adapter, use_bank)
             res = run_turn(rt, cfg, prompt, history=st.session_state.history,
-                           on_stage=on_stage)
+                           on_stage=on_stage, log=st.session_state.log)
             status.update(label=f"用时 {time.time() - t0:.1f}s", state="complete")
 
         if res.error:
@@ -167,6 +171,8 @@ if prompt:
 
     st.session_state.turns.append({"user": prompt, "result": res})
     st.session_state.history.append({"role": "user", "content": prompt})
+    if res.log_line:
+        st.session_state.log.append(res.log_line)
     if res.polish:
         st.session_state.history.append({"role": "assistant", "content": res.polish})
     st.rerun()

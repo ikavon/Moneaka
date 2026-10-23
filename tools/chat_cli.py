@@ -82,6 +82,7 @@ def main() -> int:
     print(f"就绪（{time.time() - t0:.0f}s）。输入 /quit 退出，/help 看命令。\n")
 
     history: list[dict] = []
+    log: list[str] = []
     last = None
     while True:
         try:
@@ -102,6 +103,7 @@ def main() -> int:
             continue
         if text == "/reset":
             history.clear()
+            log.clear()
             print("  历史已清空")
             continue
         if text in ("/a", "/b", "/c", "/bank", "/tight"):
@@ -111,10 +113,12 @@ def main() -> int:
             print(f"  {attr} = {getattr(cfg, attr)}")
             continue
 
-        res = run_turn(rt, cfg, text, history=history)
+        res = run_turn(rt, cfg, text, history=history, log=log)
         last = res
         show(res)
         history.append({"role": "user", "content": text})
+        if res.log_line:
+            log.append(res.log_line)
         if res.polish:
             history.append({"role": "assistant", "content": res.polish})
 

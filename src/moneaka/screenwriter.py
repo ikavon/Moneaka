@@ -239,6 +239,23 @@ def length_budget(user_msg: str) -> tuple[int, int]:
     return (110, 5) if _LONG_FORM.search(user_msg or "") else (TOTAL_CHARS_MAX, 3)
 
 
+def render_log(log: list[str] | None, last_n: int = 4) -> str:
+    """把「审查日志」压成几行，让编剧看得到自己的决策轨迹。
+
+    为什么需要：agent 化的目标形态里，编剧和审查是同一个人设的连续历史。
+    它应该知道自己上一轮写了什么指令、被驳回了几次、下游是谁说错了——
+    否则它无法在同一段对话里逐渐收敛，只会每轮从零重犯同一个错。
+
+    格式刻意简短（一行一轮、最多 4 轮）：细节会挤掉真正的内容，
+    而且它会开始解释自己为什么被驳回，那就跑偏了。
+    """
+    rows = [x.strip() for x in (log or []) if x and x.strip()][-last_n:]
+    if not rows:
+        return ""
+    return ("（以下是内部记录, 玩家看不到, 供你保持一致:）" + chr(10)
+            + chr(10).join(rows) + chr(10))
+
+
 def render_history(history: list[dict] | None, last_n: int = 8, clip: int = 80) -> str:
     """把对话历史压成几行。**保留情绪标签**——编剧需要知道她上一轮是什么语气。
 
@@ -256,9 +273,11 @@ def render_history(history: list[dict] | None, last_n: int = 8, clip: int = 80) 
 
 def build_messages(user_msg: str, *, history: list[dict] | None = None,
                    known_info: list[str] | str | None = None,
-                   memory_concl: str | None = None, **kw) -> list[dict]:
+                   memory_concl: str | None = None, log: list[str] | None = None,
+                   **kw) -> list[dict]:
     system = build_system(known_info=known_info, memory_concl=memory_concl, **kw)
-    content = SCREENWRITER_USER.format(history=render_history(history), user=user_msg)
+    content = SCREENWRITER_USER.format(
+        history=render_log(log) + render_history(history), user=user_msg)
     return [{"role": "system", "content": system}, {"role": "user", "content": content}]
 
 
@@ -370,3 +389,41 @@ def make_plan(llm, user_msg: str, *, retries: int = 1,
 
 def tag_list_text(emotions: tuple[str, ...] = EMOTIONS_ZH) -> str:
     return " / ".join(emotions)
+
+
+# ---------------------------------------------------------------------------
+# agent 当作者：把润色器的输出降级为「候选」，由 agent 写最终一句
+# ---------------------------------------------------------------------------
+# 背景：润色器是无状态的，它不知道上一轮自己怎么说的；人设的连续性只可能存在于
+# agent 一侧。所以给 agent 一个「自己写最终台词」的模式，把润色器的产出当参考，
+# 而不是不可推翻的权威——真实编剧和剧本医生的关系就是这样。
+#
+# 关键约束：必须明确要求**重写**，否则强模型会直接把 plan 抄一遍（实测抄写相似度
+# 0.74，而对照组的润色器是 0.51），那样看起来「忠实」，其实一点风格都没有。
+
+AUTHOR_SYSTEM = """你在写莫妮卡的台词。你会先看到一份「表达指令」，然后自己决定这句话
+最终怎么说出口。下面可能还会给出一个「参考写法」——那是另一个润色工具生成的候选，
+**不是标准答案**：好就用它的语气处理，不好就丢掉重写。
+
+要求:
+1. 意思严格照表达指令，谁给谁做事不能反，指令没有的信息不能加。
+2. 情绪标签序列必须与指令的「语气」行逐字一致，按次序使用，不增不删不换。
+3. **不要照抄指令的措辞**。指令是内容摘要，你要把它说成莫妮卡此刻真会说的话：
+   短句、口语、有呼吸感，可以带语气词和省略号。
+4. 但如果参考写法已经把这句话说得很好，你可以采用它的处理方式——判断标准是
+   「像不像她」，不是「像不像指令」。
+"""
+
+AUTHOR_USER = """表达指令:
+{plan}
+{reference}
+请写出莫妮卡会说的那一句（直接给台词，不要解释）:"""
+
+
+def write_line(llm, plan: str, reference: str | None = None, *,
+               profile: str = "screenwriter", temperature: float = 0.3) -> str:
+    """agent 当作者：拿到 plan（可选参考候选）后自己写最终台词。"""
+    ref = f"\n参考写法: {reference}\n" if reference else ""
+    return llm.complete(profile, AUTHOR_SYSTEM,
+                        AUTHOR_USER.format(plan=plan, reference=ref),
+                        temperature=temperature, max_tokens=300)
