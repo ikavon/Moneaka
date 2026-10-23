@@ -89,3 +89,13 @@ PYTHONPATH=src python -m moneaka.cli eval --name z1 --embed
 
 一轮的真实耗时（RTX 5060 Laptop，默认配置）：编剧约 1.5~3 秒，润色+A+B 约 4 秒。
 `TurnConfig.max_audits` 限制了一轮里最多花几次 B 审查，避免重采把延迟拖到 15 秒。
+
+## 给 MAICA 团队的材料
+
+如果要和 Edgeinfinity / MAICA 团队沟通，直接发这两份：
+
+* `docs/HANDOFF_EDGE.md` —— 形态、实测数字、踩过的坑、想谈的三件事（数据/授权/接入）
+* `docs/SAMPLES_FOR_EDGE.md` —— 实际输出样例（好样本 6 条 + 语义失手全部 9 条）
+
+一句话结论：**润色器这一侧的微调工作到此为止**（标签 99%、语义尾巴靠审查压到 3.4%、
+长文本是已知短板），再往上要靠数据和接入方式的合作，不是继续调模型。
