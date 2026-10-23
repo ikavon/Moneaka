@@ -40,11 +40,15 @@
 |---|---|---|
 | ① | ROLE_ZH 角色设定 | `MAICA_PROMPT_ZC` |
 | ② | NSFW 补丁（可选） | 对应后端的 `nsfw_acceptive` |
-| ③ | 事实卡 + known_info | `data/canon/monika_zh.md`（41 条事实）+ 后端 `known_info` |
+| ③ | 事实卡 + known_info | `data/canon/monika_zh.md`（32 条有效事实）+ 后端 `known_info` |
 | ④ | 记忆 | 后端 `memory_concl`（`ZMP`） |
 | ⑤ | 编剧规范 | 自写：28 标签白名单、段数、内容自足 |
 
-**user prompt**：最近几轮对话 + 玩家这句话（+ 场景锚）。
+**user prompt**：最近几轮对话（默认 8 条、每条截断 80 字，**保留她上一轮的情绪标签**）
++ 玩家这句话（+ 场景锚）。
+
+> 历史只给编剧。润色器、A 闸门、B 复核都只看 `plan` 与台词，**看不到历史**——
+> 这是刻意的（无状态插件），不是遗漏。
 
 **产出格式**（受控 schema，就是 plan）：
 

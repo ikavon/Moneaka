@@ -68,7 +68,8 @@ def load_canon(path: str | Path | None = None) -> list[str]:
     out: list[str] = []
     for line in p.read_text(encoding="utf-8").splitlines():
         s = line.strip()
-        if not s or s.startswith("#"):
+        # 以 `>` 开头的是文件自己的说明（性质/来源/用法），不是角色设定，别塞进 prompt
+        if not s or s.startswith("#") or s.startswith(">"):
             continue
         if s.startswith(("- ", "* ")):
             s = s[2:].strip()
@@ -167,14 +168,28 @@ def build_system(known_info: list[str] | str | None = None,
     if nsfw:
         parts.append(NSFW_PATCH)
 
-    if known_info:
-        lines = known_info if isinstance(known_info, str) else \
-            "".join(f"\n- {x}" for x in known_info)
-        parts.append(f"{KNOWN_INFO_HEADER}: {lines}")
+    # 事实卡**默认注入**。之前这个参数存在但没人用——于是编剧手里没有任何角色设定，
+    # 只能靠「莫妮卡」这个名字猜，回答自然泛。卡本身会反复改，所以从文件读。
+    if canon is None:
+        canon = load_canon()
+    facts = [canon] if isinstance(canon, str) else list(canon or [])
+    extra = [known_info] if isinstance(known_info, str) else list(known_info or [])
+    facts = [x for x in facts if str(x).strip()] + [x for x in extra if str(x).strip()]
+    if facts:
+        parts.append(f"{KNOWN_INFO_HEADER}: "
+                     + "".join(f"\n- {x}" for x in facts))
     if memory_concl:
         parts.append(MEMORY_HEADER.format(memory_concl=memory_concl))
 
     parts.append(SCREENWRITER_SYSTEM.format(role="", emotions=" / ".join(emo_list)).strip())
+    if tight:
+        parts.append(TIGHT_BUDGET)
+    if examples:
+        # 先例放在规范**之后**：规范是硬约束（格式/白名单），先例是软参考（想什么）。
+        # 顺序反了模型会优先模仿先例的段数，破坏 1~3 段的长度纪律。
+        from .planbank import PlanBank
+
+        parts.append(PlanBank.render(examples))
     return "\n".join(p for p in parts if p.strip())
 
 
