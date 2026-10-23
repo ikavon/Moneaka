@@ -20,7 +20,13 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
+import moneaka  # noqa: E402
 from moneaka.turn import Runtime, TurnConfig, run_turn  # noqa: E402
+
+# 包里的代码改过但进程还跑着旧模块 → 立刻说清楚，别让它以「莫名奇妙的 TypeError」出现
+if moneaka.build_stamp() > moneaka.BUILD_STAMP + 0.001:
+    st.error("`src/moneaka` 里的代码已经改过，但当前进程还在跑旧模块。"
+             "请重启界面（关掉窗口重新双击 run_chat_ui.cmd）。", title="需要重启")
 
 st.set_page_config(page_title="Moneaka 台词测试台", page_icon=":material/forum:",
                    layout="wide")
