@@ -40,6 +40,12 @@ class DuelResult:
     a_wins: int = 0
     b_wins: int = 0
     unparsed: int = 0
+    #: 逐条战绩 [(索引, A 赢的次数, B 赢的次数)]，用来切片看「哪一类在输」
+    detail: list[tuple[int, int, int]] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.detail is None:
+            self.detail = []
 
     @property
     def n(self) -> int:
@@ -70,33 +76,58 @@ def duel(
     seed: int = 0,
     swap: bool = True,
     max_items: int | None = None,
+    workers: int = 8,
 ) -> DuelResult:
     """``items`` = [(user, 文本A, 文本B)], 返回 A 相对 B 的胜率。
 
     ``swap=True`` 时每对正反各问一次，用来抵消位置偏差（A 位天然更容易被选）。
+    ``workers``：评委调用是网络等待，串行跑 206 条要 7 分钟，并发后 1 分钟以内。
+    并发只影响速度，不影响「每一对问哪两个方向」，所以结果与串行等价。
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     res = DuelResult()
     use = items[:max_items] if max_items else items
-    for user, a, b in use:
-        orders = (True, False) if swap else (True,)
-        for order in orders:
+
+    def one(job: tuple[int, str, str, str]) -> tuple[int, int, int, int]:
+        idx, user, a, b = job
+        wa = wb = bad = 0
+        for order in ((True, False) if swap else (True,)):
             x, y = (a, b) if order else (b, a)
             try:
                 out = llm.complete(profile, JUDGE_SYSTEM,
                                    JUDGE_USER.format(user=user, a=x, b=y),
                                    temperature=0.0, max_tokens=8)
             except Exception:
-                res.unparsed += 1
+                bad += 1
                 continue
             pick = out.strip().upper()[:1]
             if pick not in ("A", "B"):
-                res.unparsed += 1
+                bad += 1
                 continue
             chose_a = (pick == "A") if order else (pick == "B")
             if chose_a:
-                res.a_wins += 1
+                wa += 1
             else:
-                res.b_wins += 1
+                wb += 1
+        return idx, wa, wb, bad
+
+    jobs = [(i, u, a, b) for i, (u, a, b) in enumerate(use)]
+    got: dict[int, tuple[int, int, int, int]] = {}
+    if workers <= 1:
+        for job in jobs:
+            got[job[0]] = one(job)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for out in ex.map(one, jobs):
+                got[out[0]] = out
+
+    for idx in sorted(got):
+        _, wa, wb, bad = got[idx]
+        res.a_wins += wa
+        res.b_wins += wb
+        res.unparsed += bad
+        res.detail.append((idx, wa, wb))
     return res
 
 

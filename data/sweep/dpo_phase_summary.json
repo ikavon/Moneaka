@@ -18,18 +18,20 @@
    0.43
   ],
   "contract": 1.0,
-  "sem_low": 10
+  "sem_low": 10,
+  "seq": 0.9854
  },
  {
   "name": "dpo-b",
-  "win": 0.41,
-  "sem": 3.7,
+  "win": 0.405,
+  "sem": 3.55,
   "ci": [
    0.36,
-   0.46
+   0.45
   ],
   "contract": 1.0,
-  "sem_low": 10
+  "sem_low": 16,
+  "seq": 0.9854
  },
  {
   "name": "dpo-c",
@@ -40,17 +42,19 @@
    0.43
   ],
   "contract": 1.0,
-  "sem_low": 14
+  "sem_low": 14,
+  "seq": 0.9854
  },
  {
   "name": "dpo-d",
-  "win": 0.408,
-  "sem": 3.68,
+  "win": 0.432,
+  "sem": 3.57,
   "ci": [
-   0.36,
-   0.46
+   0.39,
+   0.48
   ],
   "contract": 1.0,
-  "sem_low": 15
+  "sem_low": 18,
+  "seq": 0.9854
  }
 ]

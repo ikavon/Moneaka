@@ -37,6 +37,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
     ap.add_argument("--pairs", required=True)
+    ap.add_argument("--json-out", default=None, help="把结果写一份 json，供流水线闸门读取")
     args = ap.parse_args()
 
     rows = {r["turn_id"]: r for r in map(json.loads, open(
@@ -74,6 +75,15 @@ def main() -> int:
             samples.append((tid, want, got))
 
     n = stats["n"]
+    if args.json_out:
+        Path(args.json_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.json_out).write_text(json.dumps({
+            "run": args.run, "n": n,
+            "exact": stats["exact"], "exact_rate": round(stats["exact"] / n, 4),
+            "wrong_tags": stats["same_len_wrong_tags"], "fewer": stats["fewer_segments"],
+            "more": stats["more_segments"],
+            "pos_acc": round((total_pos - wrong_pos) / total_pos, 4) if total_pos else None,
+        }, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"run={args.run}  有效样本 {n}")
     if not n:
         print("没有可比对的样本（输入不是受控 schema？）")

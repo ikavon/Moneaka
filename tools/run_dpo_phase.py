@@ -34,6 +34,14 @@ CONFIGS = [
 MERGED = "data/models/Qwen3-1.7B-sft-merged"
 
 
+def seq_rate(adapter_dir: str) -> float | None:
+    """从 tag_compliance 写出的 json 里读序列遵从率。"""
+    f = ROOT / "data" / "sweep" / f"tagcompliance_{Path(adapter_dir).name}g210.json"
+    if not f.is_file():
+        return None
+    return json.loads(f.read_text(encoding="utf-8")).get("exact_rate")
+
+
 def run(cmd: list[str], log: Path) -> int:
     env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), HF_HUB_OFFLINE="1",
                PYTHONIOENCODING="utf-8")
@@ -50,12 +58,12 @@ def main() -> int:
     ap.add_argument("--init", default="data/adapters/run8")
     ap.add_argument("--eval-pairs", default="data/pairs/split_holdout210.jsonl")
     ap.add_argument("--skip-train", action="store_true")
-    ap.add_argument("--only", default=None, help="只跑某个配置名")
+    ap.add_argument("--only", default=None, help="只跑某些配置名，逗号分隔")
     args = ap.parse_args()
 
     py = sys.executable
     for cfg in CONFIGS:
-        if args.only and cfg["name"] != args.only:
+        if args.only and cfg["name"] not in [x.strip() for x in args.only.split(",")]:
             continue
         out = f"data/adapters/{cfg['name']}"
         log = ROOT / "data" / f"{cfg['name']}.log"
@@ -76,8 +84,20 @@ def main() -> int:
         rc = run([py, "tools/pick_checkpoint.py", "--adapter-dir", out,
                   "--base", MERGED, "--pairs", args.eval_pairs,
                   "--final-only", "--temperature", "0", "--tag", "g210",
-                  "--workers", "2", "--reuse"], log)
+                  "--workers", "2"], log)
+        # 不要用 --reuse：它会复用同名 runs 目录里的旧 arms.jsonl。
+        # 事故教训——换了基座重训，评测却读到上一版基座的生成结果，
+        # 数字一模一样（连 142/206 都没变），看起来像「模型没变」。
         print(f"  评测返回码 {rc}")
+        # 标签序列遵从率必须单独查：`contract.check()` 只看格式合不合法，
+        # 不看标签对不对。事故教训——四组 DPO 的「契约 100%」全过，
+        # 而标签遵从率从 99% 崩到 69%，闸门没拦住。
+        rc2 = run([py, "tools/tag_compliance.py",
+                   "--run", f"pickg210_{Path(out).name}_final",
+                   "--pairs", args.eval_pairs,
+                   "--json-out", str(ROOT / "data" / "sweep"
+                                     / f"tagcompliance_{Path(out).name}g210.json")], log)
+        print(f"  标签遵从检查返回码 {rc2}")
 
     # 汇总：基线 + 三个 DPO
     base = ROOT / "data" / "sweep" / "run8_jointg210.json"
@@ -92,13 +112,14 @@ def main() -> int:
             r = json.loads(f.read_text(encoding="utf-8"))["rows"][0]
             rows.append({"name": cfg["name"], "win": r["win"], "sem": r["sem"],
                          "ci": r["win_ci"], "contract": r.get("contract"),
-                         "sem_low": r.get("sem_low")})
+                         "sem_low": r.get("sem_low"), "seq": seq_rate(out)})
 
     print("\n=== 阶段 A 汇总（206 条留出，greedy）===")
-    print(f"{'name':>15s} {'win':>6s} {'CI':>14s} {'sem':>5s} {'<=2':>4s}")
+    print(f"{'name':>15s} {'win':>6s} {'CI':>14s} {'sem':>5s} {'<=2':>4s} {'标签序列':>8s}")
     for r in rows:
         print(f"{r['name']:>15s} {str(r['win']):>6s} {str(r.get('ci')):>14s} "
-              f"{str(r['sem']):>5s} {str(r.get('sem_low','-')):>4s}")
+              f"{str(r['sem']):>5s} {str(r.get('sem_low','-')):>4s} "
+              f"{str(r.get('seq','-')):>8s}")
 
     out = ROOT / "data" / "sweep" / "dpo_phase_summary.json"
     out.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -113,6 +134,7 @@ def main() -> int:
                 (f"sem {r['sem']} >= {round(b['sem'] + 0.05, 2)}", r["sem"] >= b["sem"] + 0.05),
                 (f"win {r['win']} >= 0.40", r["win"] >= 0.40),
                 (f"contract {r.get('contract')}", (r.get("contract") or 0) >= 0.99),
+                (f"标签序列遵从 {r.get('seq')}", (r.get("seq") or 0) >= 0.99),
             ]
             ok = all(c[1] for c in checks)
             print(f"  {r['name']}: {'通过 ✅' if ok else '未通过'}")

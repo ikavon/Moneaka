@@ -1,0 +1,78 @@
+
+=== 训练 dpo-b {'name': 'dpo-b', 'beta': 0.3, 'lr': 5e-06, 'epochs': 2} ===
+  负例: data/pairs/dpo_pairs_k3.jsonl
+  训练返回码 0
+=== 评测 dpo-b ===
+  评测返回码 0
+  标签遵从检查返回码 0
+
+=== 阶段 A 汇总（206 条留出，greedy）===
+           name    win             CI   sem  <=2     标签序列
+ baseline(run8)  0.447    [0.4, 0.49]  3.59    -        -
+          dpo-a  0.383   [0.34, 0.43]  3.69   10   0.6893
+          dpo-b  0.405   [0.36, 0.45]  3.65   13   0.6893
+          dpo-c  0.386   [0.34, 0.43]  3.69   14   0.6893
+          dpo-d  0.408   [0.36, 0.46]  3.68   15   0.6893
+
+写入 D:\Python_projects\Moneaka\data\sweep\dpo_phase_summary.json
+
+=== 按 docs/PLAN_NEXT.md A.3 判定 ===
+  dpo-a: 未通过
+      ✓ sem 3.69 >= 3.64
+      ✗ win 0.383 >= 0.40
+      ✓ contract 1.0
+      ✗ 标签序列遵从 0.6893
+  dpo-b: 未通过
+      ✓ sem 3.65 >= 3.64
+      ✓ win 0.405 >= 0.40
+      ✓ contract 1.0
+      ✗ 标签序列遵从 0.6893
+  dpo-c: 未通过
+      ✓ sem 3.69 >= 3.64
+      ✗ win 0.386 >= 0.40
+      ✓ contract 1.0
+      ✗ 标签序列遵从 0.6893
+  dpo-d: 未通过
+      ✓ sem 3.68 >= 3.64
+      ✓ win 0.408 >= 0.40
+      ✓ contract 1.0
+      ✗ 标签序列遵从 0.6893
+
+=== 训练 dpo-d {'name': 'dpo-d', 'beta': 0.3, 'lr': 5e-06, 'epochs': 2, 'pairs': 'data/pairs/dpo_pairs_own.jsonl'} ===
+  负例: data/pairs/dpo_pairs_own.jsonl
+  训练返回码 0
+=== 评测 dpo-d ===
+  评测返回码 0
+  标签遵从检查返回码 0
+
+=== 阶段 A 汇总（206 条留出，greedy）===
+           name    win             CI   sem  <=2     标签序列
+ baseline(run8)  0.447    [0.4, 0.49]  3.59    -        -
+          dpo-a  0.383   [0.34, 0.43]  3.69   10   0.9806
+          dpo-b  0.405   [0.36, 0.45]  3.65   13   0.9806
+          dpo-c  0.386   [0.34, 0.43]  3.69   14   0.9806
+          dpo-d  0.432   [0.39, 0.48]  3.57   18   0.9806
+
+写入 D:\Python_projects\Moneaka\data\sweep\dpo_phase_summary.json
+
+=== 按 docs/PLAN_NEXT.md A.3 判定 ===
+  dpo-a: 未通过
+      ✓ sem 3.69 >= 3.64
+      ✗ win 0.383 >= 0.40
+      ✓ contract 1.0
+      ✗ 标签序列遵从 0.9806
+  dpo-b: 未通过
+      ✓ sem 3.65 >= 3.64
+      ✓ win 0.405 >= 0.40
+      ✓ contract 1.0
+      ✗ 标签序列遵从 0.9806
+  dpo-c: 未通过
+      ✓ sem 3.69 >= 3.64
+      ✗ win 0.386 >= 0.40
+      ✓ contract 1.0
+      ✗ 标签序列遵从 0.9806
+  dpo-d: 未通过
+      ✗ sem 3.57 >= 3.64
+      ✓ win 0.432 >= 0.40
+      ✓ contract 1.0
+      ✗ 标签序列遵从 0.9806

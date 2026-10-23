@@ -32,11 +32,30 @@ from moneaka import dataset, negatives, prompts  # noqa: E402
 
 
 def merge_sft(base: str, adapter: str, out_dir: str) -> str:
-    """SFT adapter 合并成独立基座（DPOTrainer 不允许 PeftModel + peft_config 并存）。"""
+    """SFT adapter 合并成独立基座（DPOTrainer 不允许 PeftModel + peft_config 并存）。
+
+    两重保护，都是被真实事故逼出来的：
+
+    1. **落了 marker 才复用**。原先只判 `config.json` 存在就返回，结果
+       `data/models/Qwen3-1.7B-sft-merged` 是前一天用 **run2** 合出来的旧货，
+       后面四组 DPO 全在它上面训，标签遵从率从 99% 崩到 69%，而报告里
+       一个字都没体现——因为没人去查基座是谁。
+    2. **合完自检**。拿一层 q_proj 算 `B@A × (alpha/r)`，跟 ``merged - base``
+       比相关系数与尺度。相关 <0.9 或尺度偏离 >20% 直接报错，不往下跑。
+    """
     tgt = str(Path(out_dir).resolve())
+    marker = Path(tgt) / ".merge_source.json"
+    want = {"base": str(Path(base).resolve()), "adapter": str(Path(adapter).resolve()),
+            "adapter_mtime": round(Path(adapter, "adapter_model.safetensors").stat().st_mtime, 0)}
     if (Path(tgt) / "config.json").exists():
-        print(f"合并基座已存在: {tgt}")
-        return tgt
+        got = json.loads(marker.read_text(encoding="utf-8")) if marker.is_file() else None
+        if got == want:
+            print(f"合并基座已存在且来源一致: {tgt}")
+            return tgt
+        raise SystemExit(
+            f"合并目录已存在但来源不符，拒绝复用：\n  {tgt}\n  期望 {want}\n  实际 {got}\n"
+            f"请先删除该目录（或换 --merged）。")
+
     import torch
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -46,13 +65,66 @@ def merge_sft(base: str, adapter: str, out_dir: str) -> str:
                                              device_map="cuda", trust_remote_code=True)
     m = PeftModel.from_pretrained(m, adapter)
     m = m.merge_and_unload()
+    _verify_merge(m, adapter)
     m.save_pretrained(tgt)
     AutoTokenizer.from_pretrained(base).save_pretrained(tgt)
+    marker.write_text(json.dumps(want, ensure_ascii=False, indent=1), encoding="utf-8")
     del m
     import gc
     gc.collect()
     torch.cuda.empty_cache()
     return tgt
+
+
+def _load_base_tensor(base_dir: str, key: str):
+    """从磁盘读基座的某一个张量（兼容单文件与分片两种格式）。"""
+    from safetensors.torch import load_file
+
+    d = Path(base_dir)
+    one = d / "model.safetensors"
+    if one.is_file():
+        w = load_file(str(one), device="cpu")
+        return w.get(key)
+    idx = d / "model.safetensors.index.json"
+    if not idx.is_file():
+        return None
+    import json as _json
+
+    fname = _json.loads(idx.read_text(encoding="utf-8"))["weight_map"].get(key)
+    if not fname:
+        return None
+    return load_file(str(d / fname), device="cpu").get(key)
+
+
+def _verify_merge(model, adapter: str) -> None:
+    """合并自检：``merged - base`` 应当 ≈ ``B@A × (alpha/r)`` 且高度相关。
+
+    bf16 下小增量会被舍入吃掉一部分，所以相关不可能到 1，实测正常值 ≳0.95；
+    拿错 adapter 时会掉到 0.1 量级（被真实事故验证过）。
+    """
+    import torch
+    from safetensors.torch import load_file
+
+    name = "model.layers.0.self_attn.q_proj"
+    cfg = json.loads(Path(adapter, "adapter_config.json").read_text(encoding="utf-8"))
+    scale = cfg["lora_alpha"] / (cfg["r"] ** 0.5 if cfg.get("use_rslora") else cfg["r"])
+    w = load_file(str(Path(adapter, "adapter_model.safetensors")), device="cpu")
+    ak = f"base_model.model.{name}.lora_A.weight"
+    bk = f"base_model.model.{name}.lora_B.weight"
+    base_w = _load_base_tensor(cfg["base_model_name_or_path"], f"{name}.weight")
+    if ak not in w or base_w is None:
+        print("  ! 合并自检跳过（adapter 或基座权重取不到）")
+        return
+    delta = (w[bk].float() @ w[ak].float()).flatten()
+    merged = model.state_dict()[f"{name}.weight"].float().cpu().flatten()
+    d = merged - base_w.float().flatten()
+    s = float((d * delta).sum() / (delta * delta).sum())
+    corr = float(torch.corrcoef(torch.stack([d, delta]))[0, 1])
+    ok = corr > 0.9 and abs(s / scale - 1) < 0.2
+    print(f"  合并自检: 尺度 {s:.3f} (期望 {scale:.2f})  相关 {corr:.3f}  "
+          f"{'✓' if ok else '✗ 合并结果与 adapter 不符'}")
+    if not ok:
+        raise SystemExit("合并自检失败，基座不可信，中止")
 
 
 def build_pref_rows(samples: list[dataset.Sample], axes: list[str],

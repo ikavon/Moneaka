@@ -1,0 +1,10 @@
+{
+ "run": "pickg210_dpo-d_final",
+ "n": 206,
+ "exact": 202,
+ "exact_rate": 0.9806,
+ "wrong_tags": 0,
+ "fewer": 3,
+ "more": 1,
+ "pos_acc": 1.0
+}

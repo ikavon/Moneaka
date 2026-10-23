@@ -4,18 +4,18 @@
    "run": "pickg210_dpo-d_final",
    "n": 206,
    "contract": 1.0,
-   "win": 0.408,
+   "win": 0.432,
    "win_ci": [
-    0.36,
-    0.46
+    0.39,
+    0.48
    ],
-   "sem": 3.68,
-   "sem_low": 15,
+   "sem": 3.57,
+   "sem_low": 18,
    "sem_n": 206,
    "unparsed": 0,
    "checkpoint": "dpo-d"
   }
  ],
  "best": "dpo-d",
- "sem_floor": 3.53
+ "sem_floor": 3.42
 }
