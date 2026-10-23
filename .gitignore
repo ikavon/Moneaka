@@ -1,3 +1,4 @@
+# --- Python ---
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -5,12 +6,32 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-data/pairs/
-data/runs/
-data/models/
-docs/raw/*.txt
-configs/private.yaml
-data/adapters/
 
-# 上游数据集（maica-tos，用 git clone 获取，不随仓库分发）
+# --- 本地产物：体积大，或含密钥，一律不分发 ---
+# 基座权重与训练出的 LoRA
+data/models/
+data/adapters/
+# 评测与生成的输出
+data/runs/
+data/sweep/
+# 从官方语料派生的训练数据（maica-tos，受限）
+data/pairs/
+# 上游数据集（maica-tos，用 git clone 获取）
 data/MAICA_ds_basis/
+# 端点与 API key
+configs/private.yaml
+.streamlit/secrets.toml
+
+# --- 运行日志 ---
+logs/
+*.log
+*.err
+
+# --- 杂项 ---
+docs/raw/*.txt
+
+# 第三方教程（无 LICENSE，不随仓库分发）：
+# https://github.com/edgeinfinity1/TalkingLikeMonika
+data/upstream/
+# 手工偏好标注（含官方语料片段，maica-tos）
+data/human_pref/
