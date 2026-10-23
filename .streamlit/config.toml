@@ -1,0 +1,9 @@
+[theme]
+base = "light"
+primaryColor = "#D4537E"
+
+[server]
+headless = false
+
+[browser]
+gatherUsageStats = false

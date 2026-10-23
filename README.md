@@ -74,3 +74,18 @@ PYTHONPATH=src python -m moneaka.cli eval --name z1 --embed
 
 模型与训练数据是 `maica-tos`（自定义条款），训练数据未附许可说明。
 自用实验没问题，**公开发布前必须与 MAICA 官方对齐条款**。
+
+## 聊天测试台（试玩 / 对照各层）
+
+两个入口，逻辑共用 `moneaka.turn`，不存在两套实现：
+
+* **界面版**：双击 `run_chat_ui.cmd`（或 `streamlit run streamlit_app.py`）
+* **命令行版**：双击 `run_chat_cli.cmd`（或 `python tools/chat_cli.py`）
+
+界面上能看到一轮对话的每一步：编剧写的表达指令、润色器说的台词、C/A/B 三层审查的判决、
+重采几次、耗时。侧边栏可以单独开关各层，用来对照「加了这层到底有没有用」。
+
+命令行里的命令：`/plan` 看上次指令，`/a /b /c /bank /tight` 切换各层，`/reset` 清历史。
+
+一轮的真实耗时（RTX 5060 Laptop，默认配置）：编剧约 1.5~3 秒，润色+A+B 约 4 秒。
+`TurnConfig.max_audits` 限制了一轮里最多花几次 B 审查，避免重采把延迟拖到 15 秒。
