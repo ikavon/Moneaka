@@ -38,9 +38,16 @@ class TurnConfig:
     #: 额外注入给编剧的「相关信息」（如 OpenAI 外壳里调用方自己的 system prompt）。
     #: 放在 known_info 里当补充材料，不顶掉编剧规范——标签白名单和长度预算必须由我们控制。
     extra_info: list[str] = field(default_factory=list)
+    #: 编剧格式不合规时的自修复重试次数。默认 1；实测偶尔需要 2
+    #: （Q3「咖啡豆」就撞过一次：一次违规没修好，整轮直接空白）。
+    plan_retries: int = 1
     #: 一轮里最多花几次 B 审查（每次都是一次云调用）。不封顶的话，
     #: 「重采 4 次」会变成 4 次云端往返，交互延迟从 4 秒涨到 15 秒。
     max_audits: int = 2
+    #: 只有**硬错**才退化成直译。B 的「近义/增减」这类软判断不该触发直译——
+    #: 无风格的直译比「措辞略有出入但有风格」更差（实测 Q7「守着窗 vs 敞开窗」
+    #: 就因为一条软判断整句掉成直译）。
+    hard_only_fallback: bool = True
     #: 重采仍失败时的兜底：``literal`` = 标签+内容原样拼（绝对忠实、没有风格）。
     #:
     #: 这里**不再回编剧**（重写 plan 或直出台词）。理由：编剧的职责是「决定说什么」，
@@ -123,7 +130,7 @@ def _plan_stage(rt: Runtime, cfg: TurnConfig, user: str,
             got = screenwriter.make_plan(
                 rt.llm, user, history=history, examples=examples, log=log,
                 known_info=cfg.extra_info or None,
-                tight=cfg.tight, nsfw=cfg.nsfw, retries=1)
+                tight=cfg.tight, nsfw=cfg.nsfw, retries=cfg.plan_retries)
         except Exception as exc:  # noqa: BLE001
             res.error = f"编剧失败: {str(exc)[:160]}"
             res.timings["编剧"] = time.time() - t0
@@ -266,11 +273,18 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
     if best["b"]:
         res.b_verdict, res.b_note = best["b"][0].split(":", 1)[0], best["b"][0].split(":", 1)[-1].strip()
     if best["score"]:
-        # 重采也救不回来 → 不是措辞问题，是 plan 让下游无法忠实表达
-        res.degraded_to_literal = True
-        res.polish = literal(res.plan)
-        res.degraded = True
-        res.final_source = "literal"
+        hard = list(best["a"])
+        if cfg.hard_only_fallback and not hard:
+            # 只有软性判断（B 的「近义/增减/方向措辞」）没过：保留有风格的那一版，
+            # 把问题如实留在 problems 里交给调用方。无风格的直译比「措辞略有出入
+            # 但有风格」更差（实测 Q7 守着窗/敞开窗 就因为一条软判断整句掉成直译）。
+            res.degraded = False
+        else:
+            # 硬错（标签/数字/方向/语言）→ 退化为直译，保意思不保风格
+            res.degraded_to_literal = True
+            res.polish = literal(res.plan)
+            res.degraded = True
+            res.final_source = "literal"
     res.timings["润色+A+B"] = time.time() - t0
 
 

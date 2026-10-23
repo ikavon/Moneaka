@@ -236,7 +236,8 @@ def main() -> int:
     if args.rescore:
         return rescore(Path(args.rescore))
 
-    cfg = TurnConfig(base=args.base, adapter=args.adapter, use_b=not args.no_b)
+    cfg = TurnConfig(base=args.base, adapter=args.adapter, use_b=not args.no_b,
+                     plan_retries=2)
     rt = Runtime.build(cfg)
     out_dir = ROOT / args.out
     out_dir.mkdir(parents=True, exist_ok=True)

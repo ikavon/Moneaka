@@ -312,4 +312,20 @@ def test_delivered_candidate_is_always_audited():
     rt = _rt(M(), FakeLLM([plan], verdict="drift"))
     res = run_turn(rt, TurnConfig(k=2, max_audits=2), "三倍体")
     assert res.b_verdict, "交付的候选必须留下审查结论"
-    assert res.degraded, "审查判 drift 后不能原样交付"
+    # 只有软性判断（B 的近义/增减）不触发直译：保留有风格的版本，
+    # 问题留在 b_note 里。硬错（标签/数字/方向/语言）才退化——见下一个用例。
+    assert not res.degraded
+    assert res.b_note
+
+
+def test_direction_check_ignores_plans_with_both_directions():
+    """指令里本就写了「讲给你听」和「讲给我听」两个方向，模型只留一个不算翻转。
+
+    真实误报：Q12 甘肃那题，plan 第3段「讲给你听可以」、第4段「讲给我听」，
+    被判「方向 给我 → 给你」，整句掉成直译。
+    """
+    plan = chr(10).join(["语气: 微笑", "内容:",
+                         "1. 这些地方我只是从文字里读到过, 讲给你听可以",
+                         "2. 你回来把看到的都讲给我听"])
+    line = "[微笑]这些地方我只是从文字里读到过, 讲给你听可以. 你回来把看到的都讲给我听."
+    assert [x for x in guard(plan, line) if x.startswith("方向")] == []

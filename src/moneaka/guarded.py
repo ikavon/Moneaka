@@ -70,9 +70,12 @@ def direction_flags(plan_body: str, out_body: str) -> list[str]:
     bad: list[str] = []
     a, b = _roles(plan_body), _roles(out_body)
     # (1) 同动词换了受事：帮你 → 帮我
+    #     前提是指令里**本来只有一个方向**。指令里两个方向都写了（「讲给你听可以…
+    #     你把看到的讲给我听」），模型只留一个方向不是翻转——实测 Q12 甘肃这题
+    #     就是这么被误判、整句掉成直译的。
     for verb, obj in a:
         other = "我" if obj != "我" else "你"
-        if (verb, other) in b and (verb, obj) not in b:
+        if (verb, other) in b and (verb, obj) not in b and (verb, other) not in a:
             bad.append(f"方向 {verb}{obj} → {verb}{other}")
     # (2) 换了个动词把事情揽到自己身上 / 反之：陪你 ↔ 帮你
     #     「帮/替/给」是替对方做事，「陪」是待在他身边——两者都不是同义写法，互换就是改意思。
@@ -81,9 +84,10 @@ def direction_flags(plan_body: str, out_body: str) -> list[str]:
         a_do = {v for v in DO if (v, obj) in a}
         b_do = {v for v in DO if (v, obj) in b}
         a_be, b_be = ("陪", obj) in a, ("陪", obj) in b
-        if a_do and not b_do and b_be:
+        # 同样要求「指令里本来只有一个方向」
+        if a_do and not b_do and b_be and not a_be:
             bad.append(f"方向 {'/'.join(sorted(a_do))}{obj} → 陪{obj}")
-        if a_be and not b_be and b_do:
+        if a_be and not b_be and b_do and not a_do:
             bad.append(f"方向 陪{obj} → {'/'.join(sorted(b_do))}{obj}")
     return bad
 
