@@ -32,49 +32,7 @@ from moneaka.destyle_tags import parse_tagged_plan  # noqa: E402
 from moneaka.localhf import GenConfig, get_model  # noqa: E402
 from moneaka.normalize import normalize  # noqa: E402
 
-_DIGITS = re.compile(r"\d+")
-_NUMWORD = re.compile(r"[零一二两三四五六七八九十百千万亿]+分之[零一二三四五六七八九十百千]+")
-_NEG = re.compile(r"[不没别无未莫]")
-
-
-def nums(text: str) -> set[str]:
-    return set(_DIGITS.findall(text)) | set(_NUMWORD.findall(text))
-
-
-#: 高精度检查：实测这些在 206 条上触发 19.4%，且每条触发都是真问题。
-#: 「段落没落地」那条（3-gram 覆盖）触发率高达 54%，绝大多数是模型换了语序就被判死，
-#: 属于误报，只在 --loose 时启用。
-PRECISE = ("标签", "数字", "否定", "占位符")
-
-
-def check(plan: str, out: str, loose: bool = False) -> list[str]:
-    """机械闸门。返回问题列表，空 = 通过。"""
-    bad: list[str] = []
-    try:
-        tags, contents = parse_tagged_plan(plan)
-    except Exception:  # noqa: BLE001
-        return ["plan 不可解析"]
-    got = [m.group(1) for m in contract.TAG_RE.finditer(contract.PLACEHOLDER_RE.sub("\x00", out))]
-    if got != tags:
-        bad.append(f"标签 {tags} → {got}")
-    body = contract.PLACEHOLDER_RE.sub("[player]", out)
-    body = contract.TAG_RE.sub("", body)
-    plan_body = "；".join(contents)
-
-    if not nums(plan_body) <= nums(body):
-        bad.append(f"数字丢失 {sorted(nums(plan_body) - nums(body))}")
-    if len(_NEG.findall(body)) < len(_NEG.findall(plan_body)):
-        bad.append("否定词变少")
-    if out.count("[player]") < len(re.findall(r"\[player\]", plan)):
-        bad.append("占位符丢失")
-    if not loose:
-        return bad
-    # 每段内容至少要有一部分字面落地：用 3-gram 覆盖检查（噪声大，默认关）
-    for i, c in enumerate(contents, 1):
-        grams = {c[j:j + 3] for j in range(0, max(1, len(c) - 2)) if contract._CJK_RE.search(c[j:j + 3])}
-        if grams and not (grams & {body[j:j + 3] for j in range(0, max(1, len(body) - 2))}):
-            bad.append(f"第{i}段内容完全没落地")
-    return bad
+from moneaka.guarded import check, nums  # noqa: E402
 
 
 def main() -> int:
