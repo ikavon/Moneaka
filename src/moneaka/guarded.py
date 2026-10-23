@@ -200,3 +200,30 @@ def repair_tags(plan: str, out: str) -> tuple[str, bool]:
     """给调用方的便利函数：能修就修，修不了原样返回。"""
     fixed = retag(plan, out)
     return (fixed, True) if fixed else (out, False)
+
+
+# ---------------------------------------------------------------------------
+# 错别字：拿 plan 当正确答案，只修「plan 写对了、台词写错了」的情况
+# ---------------------------------------------------------------------------
+# 真实案例：plan 里是「并肩走在树荫下」，台词输出成「在树阴下」。
+# 1.7B 在改写时会替换字形/读音相近的字——它不是在编内容，是写错了字。
+# 判据很干净：正确写法在 plan 里出现过，而台词里只出现了错的写法。
+# 只对**成对的常见混淆**做替换，不做通用纠错（那需要词典，误伤风险高）。
+
+CONFUSABLES: list[tuple[str, str]] = [
+    ("树荫", "树阴"), ("树荫", "树隂"),
+    ("时候", "时侯"),
+    ("已经", "己经"),
+    ("化妆", "化装"),
+    ("反应", "反映"),
+]
+
+
+def fix_typos(plan_body: str, out_body: str) -> tuple[str, list[str]]:
+    """把台词里写错的字改回 plan 的正确写法。返回 (新台词, 修了哪些)。"""
+    fixed, notes = out_body, []
+    for right, wrong in CONFUSABLES:
+        if right in plan_body and wrong in fixed and right not in fixed:
+            fixed = fixed.replace(wrong, right)
+            notes.append(f"错别字 {wrong} → {right}")
+    return fixed, notes

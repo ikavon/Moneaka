@@ -15,7 +15,7 @@ from typing import Any
 
 from . import audit, screenwriter
 from .destyle_tags import parse_tagged_plan
-from .guarded import STRICT, check as guard, retag
+from .guarded import STRICT, check as guard, fix_typos, retag
 from .localhf import GenConfig, get_model
 from .normalize import normalize
 
@@ -104,6 +104,8 @@ class TurnResult:
     log_line: str = ""
     #: 是否靠「按位重贴标签」救回来的（说明模型标签不稳，但内容可用）
     retagged: bool = False
+    #: 修掉的错别字（plan 写对、台词写错）
+    typos_fixed: list[str] = field(default_factory=list)
     #: 模型吐出空串的次数（解码异常/被截断）。>0 说明本地服务可能有问题
     empty_outputs: int = 0
 
@@ -211,6 +213,9 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
                 {"role": "user", "content": user}]
         raw = rt.model.chat(msgs, greedy if attempt == 0 else samp)
         text, _ = normalize(raw)
+        text, typo_notes = fix_typos("；".join(res.contents), text)
+        if typo_notes:
+            res.typos_fixed.extend(typo_notes)
         if not text.strip():
             # 模型偶尔吐空串（截断/解码异常）。必须显式记一笔，否则会一路走到
             # 「退化直译」甚至返回空台词，调用方看到的是「她没说话」。

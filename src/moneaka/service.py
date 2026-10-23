@@ -54,7 +54,7 @@ from pydantic import BaseModel, Field
 
 from . import audit, contract
 from .destyle_tags import parse_tagged_plan
-from .guarded import STRICT, check as guard, retag
+from .guarded import STRICT, check as guard, fix_typos, retag
 from .localhf import GenConfig
 from .normalize import normalize
 from .prompts import restyle_system
@@ -121,6 +121,7 @@ class Polisher:
                     [{"role": "system", "content": sys_msg}, {"role": "user", "content": user}],
                     greedy if attempt == 0 else samp)
             line, _ = normalize(raw)
+            line, _typo = fix_typos("；".join(contents), line)
             problems = [p for p in guard(req.plan, line) if p.startswith(STRICT)]
             if problems and all(p.startswith("标签") for p in problems):
                 fixed = retag(req.plan, line)

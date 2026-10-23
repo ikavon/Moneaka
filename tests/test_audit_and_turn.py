@@ -329,3 +329,19 @@ def test_direction_check_ignores_plans_with_both_directions():
                          "2. 你回来把看到的都讲给我听"])
     line = "[微笑]这些地方我只是从文字里读到过, 讲给你听可以. 你回来把看到的都讲给我听."
     assert [x for x in guard(plan, line) if x.startswith("方向")] == []
+
+
+def test_typo_replaced_using_plan_as_ground_truth():
+    """真实案例：plan 是「并肩走在树荫下」，台词写成「在树阴下」。"""
+    from moneaka.guarded import fix_typos
+
+    fixed, notes = fix_typos("我想和你并肩走在树荫下", "[憧憬]我想和你挨在一起, 在树阴下...")
+    assert "树荫" in fixed and "树阴" not in fixed
+    assert notes
+
+
+def test_typo_not_touched_when_plan_says_otherwise():
+    from moneaka.guarded import fix_typos
+
+    fixed, notes = fix_typos("这里没有那个词", "[微笑]在树阴下")
+    assert fixed == "[微笑]在树阴下" and not notes
