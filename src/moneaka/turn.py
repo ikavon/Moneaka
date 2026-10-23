@@ -221,8 +221,10 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
             trigger = []          # 预算用完：本轮不再送审，只留机械检查
 
         b_flags: list[str] = []
+        audited = False
         if trigger:
             audits += 1
+            audited = True
             v = audit.audit_polish(rt.llm, res.plan, text)
             if not v.ok:
                 b_flags = [f"{v.kind}: {v.note}"]
@@ -237,6 +239,19 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
             break
         # 把这一版的失败原因带进下一版（机械问题优先，它更确定）
         hint = "；".join(a_flags + b_flags)[:80]
+
+    # 关键：**交付前一定要审一次**。max_audits 的预算很容易被前面的废候选吃光，
+    # 结果真正交付的那个候选一次都没审过——真实对话第 5 轮就这么漏掉了内容丢失。
+    if best is not None and cfg.use_b and not best.get("audited"):
+        trigger = audit.needs_polish_audit(res.plan, best["polish"])
+        if trigger:
+            v = audit.audit_polish(rt.llm, res.plan, best["polish"])
+            if not v.ok:
+                best["b"] = [f"{v.kind}: {v.note}"]
+                best["score"] = len(best["a"]) + 1
+            else:
+                best_seen = "ok"
+            best["audited"] = True
 
     if best is None:      # 所有尝试都是空串
         res.error = f"润色器连续 {cfg.k + 1} 次输出空串"

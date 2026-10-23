@@ -74,6 +74,9 @@ class TurnRequest(BaseModel):
     user: str
     history: list[dict] = Field(default_factory=list)
     log: list[str] = Field(default_factory=list)
+    #: 覆盖服务端的默认开关（use_c_llm / use_a / use_b / tight / k / temperature）。
+    #: 没有这个通道时，界面上切换开关对 HTTP 后端完全无效。
+    overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 class PolishResponse(BaseModel):
@@ -178,8 +181,14 @@ def create_app(polisher: Polisher, *, token: str | None = None,
             raise HTTPException(status_code=501, detail="该服务未启用 /turn")
         if not sem.acquire(timeout=queue_timeout):
             raise HTTPException(status_code=503, detail="busy, retry later")
+        import dataclasses
+
+        allowed = {"use_c", "use_c_llm", "use_a", "use_b", "tight",
+                   "k", "temperature", "max_audits"}
+        kw = {k: v for k, v in (req.overrides or {}).items() if k in allowed}
+        cfg = dataclasses.replace(turn_cfg, **kw) if kw else turn_cfg
         try:
-            res = turn_fn(runtime, turn_cfg, req.user,
+            res = turn_fn(runtime, cfg, req.user,
                           history=req.history, log=req.log)
         finally:
             sem.release()

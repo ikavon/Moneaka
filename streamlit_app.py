@@ -59,11 +59,13 @@ def init_state() -> None:
 init_state()
 
 
-def call_http(url: str, token: str, user: str, history: list, log: list):
+def call_http(url: str, token: str, user: str, history: list, log: list,
+              overrides: dict | None = None):
     """调服务的 /turn。返回一个和 TurnResult 字段兼容的简单对象。"""
     import httpx
 
-    payload = {"user": user, "history": history, "log": log}
+    payload = {"user": user, "history": history, "log": log,
+               "overrides": overrides or {}}
     r = httpx.post(f"{url.rstrip('/')}/turn", json=payload, timeout=180,
                    headers={"Authorization": f"Bearer {token}"} if token else {})
     r.raise_for_status()
@@ -146,8 +148,8 @@ st.caption("编剧决定说什么，润色器决定怎么说；中间的表达�
 
 use_http = backend.startswith("HTTP")
 if use_http:
-    st.caption("HTTP 模式下，模型、审查层、生成参数都由**服务端**决定；"
-               "侧边栏这些开关不生效。")
+    st.caption("HTTP 模式下，模型由服务端决定；审查层与生成参数会作为 overrides "
+               "传给服务端（`/turn` 支持这些开关）。")
 
 cfg = TurnConfig(base=base, adapter=adapter, use_c=use_c, use_c_llm=use_c_llm,
                  use_a=use_a, use_b=use_b,
@@ -200,7 +202,11 @@ if prompt:
             if use_http:
                 try:
                     res = call_http(svc_url, svc_token, prompt,
-                                    st.session_state.history, st.session_state.log)
+                                    st.session_state.history, st.session_state.log,
+                                    overrides={"use_c": use_c, "use_c_llm": use_c_llm,
+                                               "use_a": use_a, "use_b": use_b,
+                                               "tight": tight, "k": k,
+                                               "temperature": temperature})
                 except Exception as exc:  # noqa: BLE001
                     res = None
                     st.session_state.last_error = f"{type(exc).__name__}: {exc}"

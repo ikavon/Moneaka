@@ -288,3 +288,28 @@ def test_empty_output_falls_back_with_error_not_silence():
     res = run_turn(rt, TurnConfig(k=1), "在吗")
     assert res.empty_outputs > 0
     assert res.error and res.polish  # 不能静默返回空台词
+
+
+def test_delivered_candidate_is_always_audited():
+    """预算被前面的废候选吃光时，**交付的那个也必须审一次**。
+
+    真实事故：第 5 轮重采 2 次，max_audits=2 全花在前两个候选上，
+    最后交付的候选从没审过，于是「解释整段丢失」被漏掉。
+    """
+    plan = chr(10).join(["语气: 思考 > 惊喜 > 微笑", "内容:",
+                         "1. 三倍体我很少听到",
+                         "2. 三倍体意味着染色体配对不齐",
+                         "3. 你从哪知道这个的"])
+
+    class M:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, messages, cfg=None):
+            self.n += 1
+            return "[思考]那你是从哪里听说的呢? [惊喜]我从来没听说过 [微笑]真有意思"
+
+    rt = _rt(M(), FakeLLM([plan], verdict="drift"))
+    res = run_turn(rt, TurnConfig(k=2, max_audits=2), "三倍体")
+    assert res.b_verdict, "交付的候选必须留下审查结论"
+    assert res.degraded, "审查判 drift 后不能原样交付"
