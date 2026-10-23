@@ -34,6 +34,31 @@ CONFIGS = [
 MERGED = "data/models/Qwen3-1.7B-sft-merged"
 
 
+def dump_samples(run: str, out_md: Path, n: int = 12) -> None:
+    """把若干条 `指令 → 输出 → 官方原答` 摊成 markdown（不调 API）。"""
+    import random
+
+    f = ROOT / "data" / "runs" / run / "arms.jsonl"
+    if not f.is_file():
+        return
+    rows = [json.loads(l) for l in open(f, encoding="utf-8")]
+    pick = random.Random(0).sample(rows, min(n, len(rows)))
+    lines = [f"# {run} 随机 {len(pick)} 条
+"]
+    for r in pick:
+        lines.append(f"### {r['turn_id']}")
+        lines.append("```")
+        lines.append("指令: " + " | ".join(x.strip() for x in r["draft"].splitlines()))
+        lines.append("我们: " + r["polish"])
+        lines.append("真货: " + r["original"])
+        lines.append("```")
+    out_md.write_text("
+".join(lines), encoding="utf-8")
+    print(f"  → 样本 {out_md}")
+    for r in pick[:3]:
+        print(f"     {r['polish'][:60]}")
+
+
 def seq_rate(adapter_dir: str) -> float | None:
     """从 tag_compliance 写出的 json 里读序列遵从率。"""
     f = ROOT / "data" / "sweep" / f"tagcompliance_{Path(adapter_dir).name}g210.json"
@@ -98,6 +123,9 @@ def main() -> int:
                    "--json-out", str(ROOT / "data" / "sweep"
                                      / f"tagcompliance_{Path(out).name}g210.json")], log)
         print(f"  标签遵从检查返回码 {rc2}")
+        # 强制摊输出：不花 API，直接把 12 条样本写进日志和文件。
+        # 事故教训——只报数字不摊输出，「标签全换掉」这种问题在均值里看不出来。
+        dump_samples(f"pickg210_{Path(out).name}_final", log.parent / f"{cfg['name']}_samples.md")
 
     # 汇总：基线 + 三个 DPO
     base = ROOT / "data" / "sweep" / "run8_jointg210.json"
