@@ -69,6 +69,13 @@ class PolishRequest(BaseModel):
     temperature: float = Field(0.6, ge=0.0, le=1.5, description="重采温度")
 
 
+class TurnRequest(BaseModel):
+    """调试接口的请求：走完整链路（编剧 → C → 润色 → A/B）。"""
+    user: str
+    history: list[dict] = Field(default_factory=list)
+    log: list[str] = Field(default_factory=list)
+
+
 class PolishResponse(BaseModel):
     ok: bool
     line: str
@@ -138,7 +145,8 @@ class Polisher:
 
 
 def create_app(polisher: Polisher, *, token: str | None = None,
-               queue_timeout: float = 30.0) -> FastAPI:
+               queue_timeout: float = 30.0, turn_fn=None,
+               runtime: Any = None, turn_cfg: Any = None) -> FastAPI:
     """产出一个可跑的 FastAPI 应用。测试时传假 polisher 即可，不需要 GPU。"""
     app = FastAPI(title="Moneaka polisher", version=str(API_VERSION))
     sem = threading.Semaphore(1)          # 队列只允许一个在跑，其余等待
@@ -153,6 +161,34 @@ def create_app(polisher: Polisher, *, token: str | None = None,
     def health() -> dict[str, Any]:
         return {"ok": True, "version": API_VERSION,
                 "busy": sem._value == 0}  # noqa: SLF001  只读，用来观测排队
+
+    @app.post("/turn")
+    def turn(req: TurnRequest, authorization: str | None = Header(default=None)):
+        """**调试用**：完整链路 + 中间产物。生产请用 /polish。
+
+        为什么不把它做成默认：这个接口会跑编剧（云端）并把内部判断全暴露出来，
+        生产调用方不需要，也容易被误当成稳定契约。测试台用它。
+        """
+        _auth(authorization)
+        if turn_fn is None:
+            raise HTTPException(status_code=501, detail="该服务未启用 /turn")
+        if not sem.acquire(timeout=queue_timeout):
+            raise HTTPException(status_code=503, detail="busy, retry later")
+        try:
+            res = turn_fn(runtime, turn_cfg, req.user,
+                          history=req.history, log=req.log)
+        finally:
+            sem.release()
+        return {
+            "ok": res.ok, "error": res.error,
+            "plan": res.plan, "tags": res.tags, "contents": res.contents,
+            "polish": res.polish, "attempts": res.attempts,
+            "degraded": res.degraded, "final_source": res.final_source,
+            "c_flags": res.c_flags, "c_repaired": res.c_repaired,
+            "a_flags": res.a_flags, "b_verdict": res.b_verdict,
+            "b_note": res.b_note, "candidates": res.candidates,
+            "timings": res.timings, "log_line": res.log_line,
+        }
 
     @app.post("/polish", response_model=PolishResponse)
     def polish(req: PolishRequest, authorization: str | None = Header(default=None)):

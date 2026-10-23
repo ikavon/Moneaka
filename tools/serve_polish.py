@@ -47,14 +47,16 @@ def main() -> int:
     if args.no_audit:
         print("注意：--no-audit 时请求里的 audit 会失效（服务端没有 LLM 客户端）")
 
-    app = create_app(polisher, token=args.token, queue_timeout=args.queue_timeout)
+    from moneaka.turn import Runtime, TurnConfig, run_turn as _run_turn
+
+    rt = Runtime(model=model, llm=llm, bank=None)
+    turn_cfg = TurnConfig(base=args.base, adapter=args.adapter, nsfw=args.nsfw)
+    app = create_app(polisher, token=args.token, queue_timeout=args.queue_timeout,
+                     turn_fn=_run_turn, runtime=rt, turn_cfg=turn_cfg)
     if args.openai:
         from moneaka.openai_facade import add_openai_routes
-        from moneaka.turn import Runtime, TurnConfig
 
-        rt = Runtime(model=model, llm=llm, bank=None)
-        add_openai_routes(app, rt, TurnConfig(base=args.base, adapter=args.adapter,
-                                              nsfw=args.nsfw), token=args.token)
+        add_openai_routes(app, rt, turn_cfg, token=args.token)
         print("已挂 OpenAI 兼容接口: /v1/chat/completions  (model 名填 moneaka)")
     print(f"就绪 → http://{args.host}:{args.port}/polish  （文档 /docs）")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

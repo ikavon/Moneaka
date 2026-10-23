@@ -53,6 +53,27 @@ def init_state() -> None:
 init_state()
 
 
+def call_http(url: str, token: str, user: str, history: list, log: list):
+    """调服务的 /turn。返回一个和 TurnResult 字段兼容的简单对象。"""
+    import httpx
+
+    payload = {"user": user, "history": history, "log": log}
+    r = httpx.post(f"{url.rstrip('/')}/turn", json=payload, timeout=180,
+                   headers={"Authorization": f"Bearer {token}"} if token else {})
+    r.raise_for_status()
+    d = r.json()
+
+    class R:
+        pass
+
+    o = R()
+    for k, v in d.items():
+        setattr(o, k, v)
+    o.error = d.get("error") or ""
+    o.ok = bool(d.get("ok"))
+    return o
+
+
 def asdict_like(res) -> dict:
     return {"plan": res.plan, "polish": res.polish, "c_flags": res.c_flags,
             "a_flags": res.a_flags, "b_verdict": res.b_verdict,
@@ -62,6 +83,14 @@ def asdict_like(res) -> dict:
 
 # ---------------------------------------------------------------- 侧边栏
 with st.sidebar:
+    st.subheader("后端")
+    backend = st.radio("这一轮怎么跑", ["进程内（直接加载模型）", "HTTP 服务（/turn）"],
+                       horizontal=False, label_visibility="collapsed",
+                       help="选中 HTTP 时，界面只是服务的一个客户端——测的就是将来"
+                            "QQ/MAS 会用到的那条链路")
+    svc_url = st.text_input("服务地址", "http://127.0.0.1:8010")
+    svc_token = st.text_input("token", "devtoken", type="password")
+
     st.subheader("模型")
     adapter = st.selectbox("润色器 adapter", adapters(), index=0)
     base = st.text_input("基座", "data/models/Qwen3-1.7B")
@@ -104,6 +133,11 @@ with st.sidebar:
 # ---------------------------------------------------------------- 主体
 st.title("台词测试台")
 st.caption("编剧决定说什么，润色器决定怎么说；中间的表达指令是唯一契约。")
+
+use_http = backend.startswith("HTTP")
+if use_http:
+    st.caption("HTTP 模式下，模型、审查层、生成参数都由**服务端**决定；"
+               "侧边栏这些开关不生效。")
 
 cfg = TurnConfig(base=base, adapter=adapter, use_c=use_c, use_c_llm=use_c_llm,
                  use_a=use_a, use_b=use_b,
@@ -153,10 +187,22 @@ if prompt:
             def on_stage(name: str) -> None:
                 status.update(label=f":shimmer[{name}]")
 
-            rt = load_runtime(base, adapter, use_bank)
-            res = run_turn(rt, cfg, prompt, history=st.session_state.history,
-                           on_stage=on_stage, log=st.session_state.log)
+            if use_http:
+                try:
+                    res = call_http(svc_url, svc_token, prompt,
+                                    st.session_state.history, st.session_state.log)
+                except Exception as exc:  # noqa: BLE001
+                    res = None
+                    st.session_state.last_error = f"{type(exc).__name__}: {exc}"
+            else:
+                rt = load_runtime(base, adapter, use_bank)
+                res = run_turn(rt, cfg, prompt, history=st.session_state.history,
+                               on_stage=on_stage, log=st.session_state.log)
             status.update(label=f"用时 {time.time() - t0:.1f}s", state="complete")
+
+        if res is None:
+            st.error(st.session_state.get("last_error", "请求失败"), title="服务没通")
+            st.stop()
 
         if res.error:
             st.error(res.error, title="这一轮没跑通")
