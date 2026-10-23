@@ -1,101 +1,121 @@
 # Moneaka
 
-**莫妮卡口吻润色器**：通用 LLM 负责「说什么」，Moneaka 负责「怎么说」。
+**莫妮卡口吻润色器**：把「说什么」和「怎么说」拆开——任何大模型负责前者，一个
+1.7B 的本地小模型负责后者。
 
 ```
-通用大模型（任意供应商，负责推理/记忆/决策）
-      │  平实草稿
-      ▼
-┌──────────────────────────┐
-│ Moneaka 润色器（1.7B 级） │  ← 只做语言改写，不许改内容
-└──────────────────────────┘
-      │  莫妮卡口吻
-      ▼
-   玩家 / MAS / Minecraft / QQ bot
+玩家消息 + 记忆/事实卡
+        │
+        ▼
+   任意大模型（编剧）─────────────── 决定「说什么、什么情绪」
+        │  表达指令：语气=标签序列 / 内容=逐段要点
+        ▼
+┌───────────────────────────┐
+│ Moneaka（1.7B，LoRA）      │  只决定「怎么说」，不许改内容
+└───────────────────────────┘
+        │  台词（带 [情绪标签]）
+        ▼
+   MAS / Minecraft / QQ bot / 任意聊天场景
 ```
 
-动机：MAICA 的 DAA4 把「像莫妮卡一样说话」微调进了权重，但 397B-A17B 的体量决定了
-普通用户无法本地部署。而「说话方式」是低维特征，小模型足够学会；「智力」才需要大模型。
-把两者拆开，就能同时要到高智力 + 莫妮卡皮 + 本地零成本风格。
+动机：MAICA 的 DAA4 把"像莫妮卡一样说话"微调进了 397B 的权重里，普通用户跑不起来。
+而**说话方式是低维特征**，小模型学得会；智力才需要大模型。拆开就能同时拿到
+"大模型的脑子 + 莫妮卡的口吻 + 本地零成本"。
 
-## 为什么值得做（数据实锤）
+> 这不是"换个模型做角色扮演"，而是**把风格做成一个可插拔的层**：
+> 润色器无状态、不看历史、不记任何东西，因此可以多实例并发，服务任何 agent。
 
-官方 DAA4 训练语料读下来（`docs/DATA_INVENTORY.md`）确认了三件事：
+---
 
-1. **风格契约是明文规定，不用我们发明**——MAICA 骨架 system prompt 原文就写着
-   「每个句子自然且不超过60字」「在每个句子前用方括号中的文字表示情绪」
-2. **输出极短**：单轮中位 35 字、最长 126 字 ⇒ 训练序列 ~256 token 足够 ⇒
-   8GB 显存（RTX 5060 Laptop）上 1.7B/4B LoRA 很宽裕
-3. **情绪标签是闭合小词表**（本分片 18 个），下游 MTTS/动画映射依赖它 ⇒
-   润色器只能复用这张表，不能自创
+## 现在能做什么
 
-`moneaka stats` 会把契约校验器拿真实数据当考题：**当前 226/226 全过**，
-说明校验阈值就是官方分布。
+| 能力 | 状态 |
+|---|---|
+| 把表达指令渲染成莫妮卡台词 | ✅ 标签序列遵从 **99.0%**，逐位标签 **100%** |
+| 语义保真 | ✅ 机械闸门 + 语义复核后，灾难性漂移 **17/206 → 7/206** |
+| 两种服务形态 | ✅ 薄服务 `POST /polish`（无状态）／OpenAI 兼容 `POST /v1/chat/completions` |
+| 聊天测试台 | ✅ Streamlit（可切换"进程内"或"HTTP 服务"两种后端） |
+| 官方基准（12 题 / 99 分） | ⚠️ 只能出自动预评；最终分必须人工打 |
 
-## 用法
+**已知短板**：长指令（>55 字）渲染时模型倾向于照抄指令措辞（相似度 0.58~0.88）。
+详见 [docs/HANDOFF_EDGE.md](docs/HANDOFF_EDGE.md) 的"已知限制"。
 
-环境：`moneaka` conda 环境（Python 3.12 / torch 2.14.1+cu130 / peft / trl / bitsandbytes）。
+---
+
+## 快速开始
 
 ```bash
-cd D:/Python_projects/Moneaka
-export MONEAKA_BASE_URL=...        # 强模型端点（OpenAI 兼容）
-export MONEAKA_API_KEY=...
-export MONEAKA_STRONG_MODEL=...
-export MONEAKA_LOCAL_BASE_URL=http://localhost:1234/v1   # LM Studio / llama.cpp
-export MONEAKA_LOCAL_MODEL=Qwen3-1.7B
+# 1) 依赖（只需一次）
+pip install -e .
+pip install fastapi uvicorn streamlit          # 服务和界面
 
-PYTHONPATH=src python -m moneaka.cli stats              # 不联网，先跑这个
-PYTHONPATH=src python -m moneaka.cli destyle --limit 60 # 造 (草稿, 原稿) 平行语料
-PYTHONPATH=src python -m moneaka.cli polish --name z1    # 润色 + 对照组
-PYTHONPATH=src python -m moneaka.cli eval --name z1 --embed
+# 2) 配端点（不进 git）
+cat > configs/private.yaml <<'YAML'
+endpoints:
+  strong:
+    base_url: https://your-endpoint/v1
+    api_key: sk-...
+    model: your-model
+YAML
+
+# 3) 起服务（润色器 + OpenAI 兼容外壳）
+python tools/serve_polish.py --port 8010 --token devtoken --openai
+
+# 4) 起测试台
+streamlit run streamlit_app.py        # Windows 也可双击 run_chat_ui.cmd
 ```
 
-三臂对照（`eval` 的表格）：
+> **基座权重和 LoRA 不在仓库里**（见下方"许可"）。没有它们时，服务起不来——
+> 但 `tests/` 里的 100+ 个用例用假模型，不需要 GPU 也能跑：
+> `python -m pytest -q`
 
-| arm | 是什么 | 角色 |
-|---|---|---|
-| `reference` | 官方数据里的真实 DAA4 输出 | 天花板 |
-| `direct` | 通用模型按官方骨架 prompt 直接扮演 | 竞品（纯 prompt 路线） |
-| `polish` | 通用模型出草稿 → Moneaka 润色 | 本项目主张 |
+---
 
-指标：`contract_pass`（机械校验）· `semantic`（评委：语义保持 0-4）·
-`style`（评委：像不像她 0-4，评分轴取自官方 chosen/rejected 对照）· `cos_ref`。
+## 仓库结构
 
-## 阶段
+```
+src/moneaka/          核心库
+  turn.py             一轮的编排：编剧 → C 审查 → 润色 → A/B 审查 → 兜底
+  screenwriter.py     编剧（大模型侧）：提示词、格式校验、长度预算
+  prompts.py          润色器的 system prompt 与铁律
+  guarded.py          A 层机械闸门（标签/数字/施受方向/语言）+ 标签重贴
+  audit.py            C 前置审查（机械）+ B 台词复核（模型）
+  service.py          薄服务与 /turn 调试接口
+  openai_facade.py    OpenAI 兼容外壳
+  localhf.py          本地模型加载与生成
+  contract.py         输出契约（标签白名单、句长、校验）
+tools/                可执行脚本（评测、训练、服务、基准）
+docs/                 文档（入口：docs/INDEX.md）
+tests/                100+ 用例，全部用假模型，无需 GPU
+data/                 只有输入类资源（事实卡等）；训练数据/权重/日志都不入库
+```
 
-- [x] 阶段 0a 契约 + 校验器 + 语料加载 + 三臂评测管线
-- [ ] 阶段 0b 跑通往返：去风格化 → 零样本润色 → 评测（需 API key 与本地小模型）
-- [ ] 阶段 1  LoRA 训练润色器（1.7B 主攻，4B 对照）
-- [ ] 阶段 2 插件化：OpenAI 兼容端点 / MCP server，接 maidllmlocal 的 `player_relay`
+---
 
-设计与取舍见 `docs/DESIGN.md`；数据盘点见 `docs/DATA_INVENTORY.md`。
+## 文档
 
-## 许可提醒
+从 [docs/INDEX.md](docs/INDEX.md) 进。三份最该先看：
 
-模型与训练数据是 `maica-tos`（自定义条款），训练数据未附许可说明。
-自用实验没问题，**公开发布前必须与 MAICA 官方对齐条款**。
+- [docs/PIPELINE_SINGLE_TURN.md](docs/PIPELINE_SINGLE_TURN.md) —— 一轮到底经过什么
+- [docs/BASELINE.md](docs/BASELINE.md) —— 评测协议与基线（数字都在这里）
+- [docs/JUDGE_POLICY.md](docs/JUDGE_POLICY.md) —— 判官规则（吃过亏之后写死的）
 
-## 聊天测试台（试玩 / 对照各层）
+给 MAICA 团队的材料：[docs/HANDOFF_EDGE.md](docs/HANDOFF_EDGE.md)、
+[docs/SAMPLES_FOR_EDGE.md](docs/SAMPLES_FOR_EDGE.md)。
 
-两个入口，逻辑共用 `moneaka.turn`，不存在两套实现：
+---
 
-* **界面版**：双击 `run_chat_ui.cmd`（或 `streamlit run streamlit_app.py`）
-* **命令行版**：双击 `run_chat_cli.cmd`（或 `python tools/chat_cli.py`）
+## 许可
 
-界面上能看到一轮对话的每一步：编剧写的表达指令、润色器说的台词、C/A/B 三层审查的判决、
-重采几次、耗时。侧边栏可以单独开关各层，用来对照「加了这层到底有没有用」。
+* **代码**：待定（建议 MIT，等你确认）。
+* **事实卡 `data/canon/`**：本项目编写，随代码一起发布。
+* **训练数据、权重、LoRA、评测输出**：**不在本仓库内**。它们派生自
+  MAICA 的语料（`maica-tos`），是否可发布仍在与 MAICA 团队确认。
+* 上游教程 `TalkingLikeMonika`（无 LICENSE 文件）不随仓库分发，只留来源链接。
 
-命令行里的命令：`/plan` 看上次指令，`/a /b /c /bank /tight` 切换各层，`/reset` 清历史。
+细节见 [LICENSING.md](LICENSING.md)。
 
-一轮的真实耗时（RTX 5060 Laptop，默认配置）：编剧约 1.5~3 秒，润色+A+B 约 4 秒。
-`TurnConfig.max_audits` 限制了一轮里最多花几次 B 审查，避免重采把延迟拖到 15 秒。
+## 相关
 
-## 给 MAICA 团队的材料
-
-如果要和 Edgeinfinity / MAICA 团队沟通，直接发这两份：
-
-* `docs/HANDOFF_EDGE.md` —— 形态、实测数字、踩过的坑、想谈的三件事（数据/授权/接入）
-* `docs/SAMPLES_FOR_EDGE.md` —— 实际输出样例（好样本 6 条 + 语义失手全部 9 条）
-
-一句话结论：**润色器这一侧的微调工作到此为止**（标签 99%、语义尾巴靠审查压到 3.4%、
-长文本是已知短板），再往上要靠数据和接入方式的合作，不是继续调模型。
+- MAICA：<https://github.com/edgeinfinity/MAICA>（本项目是其本地化路线的尝试）
+- 上游风格教程：<https://github.com/edgeinfinity1/TalkingLikeMonika>
