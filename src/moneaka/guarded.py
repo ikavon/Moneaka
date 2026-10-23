@@ -51,12 +51,17 @@ def direction_flags(plan_body: str, out_body: str) -> list[str]:
         other = "我" if obj != "我" else "你"
         if (verb, other) in b and (verb, obj) not in b:
             bad.append(f"方向 {verb}{obj} → {verb}{other}")
-    # (2) 换了个动词把事情揽到自己身上：陪你 → 帮你（且“陪”彻底不见了）
-    for verb, obj in (("陪", "你"), ("陪", "您")):
-        if (verb, obj) in a and (verb, obj) not in b:
-            for v2 in ("帮", "替", "给"):
-                if (v2, obj) in b and (v2, obj) not in a:
-                    bad.append(f"方向 {verb}{obj} → {v2}{obj}")
+    # (2) 换了个动词把事情揽到自己身上 / 反之：陪你 ↔ 帮你
+    #     「帮/替/给」是替对方做事，「陪」是待在他身边——两者都不是同义写法，互换就是改意思。
+    DO, BE = {"帮", "替", "给"}, {"陪"}
+    for obj in ("你", "您"):
+        a_do = {v for v in DO if (v, obj) in a}
+        b_do = {v for v in DO if (v, obj) in b}
+        a_be, b_be = ("陪", obj) in a, ("陪", obj) in b
+        if a_do and not b_do and b_be:
+            bad.append(f"方向 {'/'.join(sorted(a_do))}{obj} → 陪{obj}")
+        if a_be and not b_be and b_do:
+            bad.append(f"方向 陪{obj} → {'/'.join(sorted(b_do))}{obj}")
     return bad
 
 def check(plan: str, out: str, loose: bool = False) -> list[str]:
