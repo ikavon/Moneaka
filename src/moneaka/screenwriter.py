@@ -346,7 +346,10 @@ def parse_and_check(raw: str, *, allow_anaphora: bool = False,
             raise PlanError(f"第 {i} 条无中文: {c!r}")
         # 第三人称自称：实测 deepseek 会写「莫妮卡会…」。内容行是她的自述，
         # 必须是「我」，否则润色器会把「莫妮卡」当第三人称说出口。
-        if re.search(r"莫妮卡", c) and not re.search(r"^\s*我", c):
+        # 只认「句首作主语」的那种第三人称（「莫妮卡会…」）。
+        # 之前是「出现莫妮卡且不以我开头」，结果把「圣莫妮卡山」「莫妮卡市」这类
+        # 专名全判成违规——真实对话里因此让编剧连错两次、返回空 plan。
+        if re.match(r"^\s*莫妮卡(?!山|市|区|湖|湾|海|镇|街|路|大|小)", c):
             raise PlanError(f"第 {i} 条用第三人称称呼自己，必须改成「我」: {c!r}")
         if len(c) > 40:
             warnings.append(f"第 {i} 条偏长({len(c)}字)，润色器可能被挤成两句")

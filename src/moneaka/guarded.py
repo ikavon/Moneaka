@@ -32,7 +32,30 @@ def nums(text: str) -> set[str]:
 #:
 #: 「方向」是后加的：实测 Q2 把「我帮你看看」说成「帮帮我看看」、
 #: Q10 把「陪你」说成「帮你」，B 层两次都没拦住。
-STRICT = ("标签", "数字", "方向")
+STRICT = ("标签", "数字", "方向", "语言")
+
+#: 中英混杂：真实对话里模型把整句末段写成了英文
+#: （「聊什么都行, 我 just want to hear your words.」），A/B 都没拦住。
+_EN_RUN = re.compile(r"[A-Za-z]+(?:[\s'’-]+[A-Za-z]+){2,}")   # ≥3 个连续英文词
+_LETTER = re.compile(r"[A-Za-z]")
+_CJKCH = re.compile(r"[一-鿿]")
+
+
+def language_flags(plan_body: str, out_body: str) -> list[str]:
+    """输出里出现成句的英文 / 英文占比异常。单词级外来词（apple、词源）不算。"""
+    bad: list[str] = []
+    # 必须先把占位符抹掉：`[player_nickname]` 里就有 15 个字母，
+    # 不处理会把正常台词误判成「英文占比过高」（实测 206 条里误报 5 条）。
+    # 注意：`PLACEHOLDER_RE` 只认 `[player]`，`[player_nickname]` 会漏过去，
+    # 于是它的 14 个字母被当成英文（实测误报 5 条）。这里连通用占位符一起抹。
+    out_body = re.sub(r"\[[A-Za-z_]+\]", "\x00", out_body)
+    if _EN_RUN.search(out_body):
+        bad.append(f"语言 出现英文句: {_EN_RUN.search(out_body).group(0)[:24]}")
+    n_en, n_cjk = len(_LETTER.findall(out_body)), len(_CJKCH.findall(out_body))
+    if n_en >= 10 and n_en > 0.3 * max(1, n_cjk):
+        bad.append(f"语言 英文占比过高 {n_en}/{n_cjk}")
+    return bad
+
 
 #: 施受关系：动词 + 受事人称。「我帮你」→「帮帮我」是翻转，「陪你」→「帮你」是换人做事。
 _ROLE = re.compile(r"(帮|给|替|陪|教|送|带|让|跟)(你|您|我)")
@@ -89,6 +112,7 @@ def check(plan: str, out: str, loose: bool = False) -> list[str]:
     if out.count("[player]") < len(re.findall(r"\[player\]", plan)):
         bad.append("占位符丢失")
     bad += direction_flags(plan_body, body)
+    bad += language_flags(plan_body, body)
     if not loose:
         return bad
     # 每段内容至少要有一部分字面落地：用 3-gram 覆盖检查（噪声大，默认关）

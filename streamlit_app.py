@@ -84,7 +84,11 @@ def asdict_like(res) -> dict:
     return {"plan": res.plan, "polish": res.polish, "c_flags": res.c_flags,
             "a_flags": res.a_flags, "b_verdict": res.b_verdict,
             "b_note": res.b_note, "attempts": res.attempts,
-            "degraded": res.degraded, "timings": res.timings}
+            "degraded": res.degraded, "timings": res.timings,
+            # 这几个字段是为了排查：之前编剧失败时导出里只看得到空台词，像「她没说话」
+            "error": res.error, "retagged": getattr(res, "retagged", False),
+            "empty_outputs": getattr(res, "empty_outputs", 0),
+            "final_source": getattr(res, "final_source", "polisher")}
 
 
 # ---------------------------------------------------------------- 侧边栏

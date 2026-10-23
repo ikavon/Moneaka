@@ -97,6 +97,8 @@ class TurnResult:
     log_line: str = ""
     #: 是否靠「按位重贴标签」救回来的（说明模型标签不稳，但内容可用）
     retagged: bool = False
+    #: 模型吐出空串的次数（解码异常/被截断）。>0 说明本地服务可能有问题
+    empty_outputs: int = 0
 
     @property
     def ok(self) -> bool:
@@ -202,6 +204,11 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
                 {"role": "user", "content": user}]
         raw = rt.model.chat(msgs, greedy if attempt == 0 else samp)
         text, _ = normalize(raw)
+        if not text.strip():
+            # 模型偶尔吐空串（截断/解码异常）。必须显式记一笔，否则会一路走到
+            # 「退化直译」甚至返回空台词，调用方看到的是「她没说话」。
+            res.empty_outputs += 1
+            continue
         a_flags = [p for p in guard(res.plan, text) if p.startswith(STRICT)] if cfg.use_a else []
         if a_flags and all(p.startswith("标签") for p in a_flags):
             # 内容对、只是标签错 → 按位重贴，不要浪费一次重采，更不要退化直译
@@ -231,7 +238,13 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
         # 把这一版的失败原因带进下一版（机械问题优先，它更确定）
         hint = "；".join(a_flags + b_flags)[:80]
 
-    assert best is not None
+    if best is None:      # 所有尝试都是空串
+        res.error = f"润色器连续 {cfg.k + 1} 次输出空串"
+        res.polish = literal(res.plan)
+        res.degraded = True
+        res.final_source = "literal"
+        res.timings["润色+A+B"] = time.time() - t0
+        return
     res.polish, res.a_flags, res.attempts = best["polish"], best["a"], best["attempts"]
     res.b_trigger = best.get("trigger") or []
     res.b_verdict = best_seen if not best["b"] else res.b_verdict

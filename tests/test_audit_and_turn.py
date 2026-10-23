@@ -69,7 +69,7 @@ def test_guard_allows_pronoun_instead_of_placeholder():
 
 def test_strict_tuple_only_has_high_precision_checks():
     """闸门只放「机械可判且几乎不误报」的项。否定/占位符曾被误判到 29/36 退化。"""
-    assert set(STRICT) == {"标签", "数字", "方向"}
+    assert set(STRICT) == {"标签", "数字", "方向", "语言"}
 
 
 @pytest.mark.parametrize("plan, polish, expect", [
@@ -258,3 +258,33 @@ def test_turn_uses_retag_instead_of_degrading():
     res = run_turn(rt, TurnConfig(k=0), "我熬夜了")
     assert not res.degraded and res.retagged
     assert res.polish.startswith("[担心]")
+
+
+# --------------------------------------------------------------- 语言 & 空输出
+def test_language_check_flags_english_sentence():
+    from moneaka.guarded import check
+
+    plan = "语气: 轻松\n内容:\n1. 聊什么都行, 我就想听你说话"
+    bad = check(plan, "[轻松]聊什么都行, 我 just want to hear your words.")
+    assert any(p.startswith("语言") for p in bad)
+
+
+def test_language_check_allows_loanwords():
+    from moneaka.guarded import check
+
+    plan = "语气: 笑\n内容:\n1. 苹果的英文 apple 和拉丁语词源有关"
+    assert [p for p in check(plan, "[笑]苹果的英文 apple 和拉丁语词源有关") if p.startswith("语言")] == []
+
+
+def test_third_person_check_ignores_place_names():
+    """「圣莫妮卡山」曾被我那条正则误判成第三人称，导致编剧连错两次、返回空 plan。"""
+    got = screenwriter.parse_and_check(
+        "语气: 惊讶 > 笑\n内容:\n1. 圣莫妮卡山? 我只知道加州有座圣莫妮卡市\n2. 这巧合挺有意思")
+    assert got["tags"] == ["惊讶", "笑"]
+
+
+def test_empty_output_falls_back_with_error_not_silence():
+    rt = _rt(FakeModel([""]), FakeLLM(verdict="ok"))
+    res = run_turn(rt, TurnConfig(k=1), "在吗")
+    assert res.empty_outputs > 0
+    assert res.error and res.polish  # 不能静默返回空台词
