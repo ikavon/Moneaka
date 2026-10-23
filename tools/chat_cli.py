@@ -61,6 +61,8 @@ def main() -> int:
     ap.add_argument("--k", type=int, default=3)
     ap.add_argument("--temperature", type=float, default=0.6)
     ap.add_argument("--no-c", action="store_true")
+    ap.add_argument("--c-llm", action="store_true",
+                    help="plan 审查再叠一层强模型（看历史，能抓答非所问；每轮多一次云调用）")
     ap.add_argument("--no-a", action="store_true")
     ap.add_argument("--no-b", action="store_true")
     ap.add_argument("--no-bank", action="store_true")
@@ -70,7 +72,8 @@ def main() -> int:
 
     cfg = TurnConfig(base=args.base, adapter=args.adapter, k=args.k,
                      temperature=args.temperature,
-                     use_c=not args.no_c, use_a=not args.no_a, use_b=not args.no_b,
+                     use_c=not args.no_c, use_c_llm=args.c_llm,
+                     use_a=not args.no_a, use_b=not args.no_b,
                      use_bank=not args.no_bank, tight=not args.loose_tight,
                      nsfw=args.nsfw)
     print("加载模型…（首次约 20~40 秒）")

@@ -65,7 +65,10 @@ with st.sidebar:
 
     st.subheader("审查层")
     use_c = st.toggle("C 前置审查", value=True,
-                      help="渲染前查 plan：回指词、与设定冲突、复读")
+                      help="渲染前查 plan：回指词、设定冲突、能力越界、复读")
+    use_c_llm = st.toggle("C 模型审查", value=False,
+                          help="再叠一层强模型，带历史判「有没有答非所问」；"
+                               "每轮多一次云调用。真人 plan 上误报 5%")
     use_a = st.toggle("A 机械闸门", value=True,
                       help="生成后查标签序列与数字，不过就重采")
     use_b = st.toggle("B 台词复核", value=True,
@@ -98,7 +101,8 @@ with st.sidebar:
 st.title("台词测试台")
 st.caption("编剧决定说什么，润色器决定怎么说；中间的表达指令是唯一契约。")
 
-cfg = TurnConfig(base=base, adapter=adapter, use_c=use_c, use_a=use_a, use_b=use_b,
+cfg = TurnConfig(base=base, adapter=adapter, use_c=use_c, use_c_llm=use_c_llm,
+                 use_a=use_a, use_b=use_b,
                  use_bank=use_bank, tight=tight, nsfw=nsfw, k=k,
                  temperature=temperature)
 

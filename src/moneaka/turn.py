@@ -24,7 +24,8 @@ from .normalize import normalize
 class TurnConfig:
     base: str = "data/models/Qwen3-1.7B"
     adapter: str = "data/adapters/run8"
-    use_c: bool = True          # plan 前置审查
+    use_c: bool = True          # plan 前置审查（机械，免费）
+    use_c_llm: bool = False     # plan 前置审查（强模型，看历史；每轮多一次云调用）
     use_a: bool = True          # 机械闸门
     use_b: bool = True          # 台词语义复核（触发式）
     use_bank: bool = True       # 编剧先例检索
@@ -118,7 +119,16 @@ def _plan_stage(rt: Runtime, cfg: TurnConfig, user: str,
             return
         res.plan, res.tags, res.contents = got["plan"], got["tags"], got["contents"]
         res.c_repaired = res.c_repaired or got.get("repaired", False)
-        flags = audit.check_plan_mechanical(res.plan) if cfg.use_c else []
+        # 必须把上一轮她说过的话传进去，否则「复读」那条检查永远不触发（曾是这样）
+        prev = _last_assistant(history)
+        flags = audit.check_plan_mechanical(res.plan, prev_reply=prev) if cfg.use_c else []
+        if cfg.use_c_llm and not flags:
+            # 机械查不出的（答非所问、承接错对象、把别人的事当成自己的）交给模型，
+            # 但必须带历史——只给最后一句时实测真人 plan 误报 20%。
+            v = audit.audit_plan(rt.llm, res.plan, user, history=history,
+                                 canon=chr(10).join(screenwriter.load_canon()))
+            if not v.ok:
+                flags = [f"审查: {v.note}"]
         res.c_flags = flags
         if not flags or round_ == 2:
             break
@@ -127,6 +137,13 @@ def _plan_stage(rt: Runtime, cfg: TurnConfig, user: str,
         # 带着拦截原因重来一次：把它塞进用户消息，比改 system 更不容易被忽略
         user = user + f"\n\n（上一条表达指令被驳回：{hint}。请重写，规避该问题。）"
     res.timings["编剧"] = time.time() - t0
+
+
+def _last_assistant(history: list[dict] | None) -> str | None:
+    for m in reversed(history or []):
+        if m.get("role") == "assistant" and (m.get("content") or "").strip():
+            return m["content"]
+    return None
 
 
 def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:

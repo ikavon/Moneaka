@@ -160,6 +160,9 @@ PLAN_AUDIT_SYSTEM = """你在做剧本审核。给你「角色设定摘要」「
 PLAN_AUDIT_USER = """角色设定摘要:
 {canon}
 
+最近对话（越靠后越新, 空表示没有历史）:
+{history}
+
 玩家刚说: {user}
 
 表达指令:
@@ -195,11 +198,20 @@ def audit_polish(llm, plan: str, polish: str, *, profile: str = "judge") -> Verd
 
 
 def audit_plan(llm, plan: str, user: str, *, canon: str = "",
+               history: list[dict] | None = None,
                profile: str = "judge") -> Verdict:
-    """C：plan 和设定/处境有没有硬冲突。"""
+    """C：plan 和设定/处境有没有硬冲突。
+
+    ``history`` 必须给——她的反应经常承接的是更早的对话。只给玩家最后一句时，
+    评审会把正常的玩笑/延续判成「答非所问」（实测真人 plan 误报 20%）。
+    """
+    hist = "\n".join(
+        f"{'莫妮卡' if m.get('role') == 'assistant' else '玩家'}: "
+        f"{(m.get('content') or '').strip()[:80]}"
+        for m in (history or [])[-6:]) or "（无）"
     out = llm.complete(profile, PLAN_AUDIT_SYSTEM,
                        PLAN_AUDIT_USER.format(canon=canon or "（未提供）",
-                                              user=user, plan=plan),
+                                              history=hist, user=user, plan=plan),
                        temperature=0.0, max_tokens=80)
     d = _parse_json(out)
     verdict = (d.get("verdict") or "").lower()
