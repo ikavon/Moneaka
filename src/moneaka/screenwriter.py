@@ -150,7 +150,9 @@ def build_system(known_info: list[str] | str | None = None,
                  player_nickname: str = "",
                  nsfw: bool = False,
                  canon: list[str] | str | None = None,
-                 emo_list: tuple[str, ...] = EMOTIONS_ZH) -> str:
+                 emo_list: tuple[str, ...] = EMOTIONS_ZH,
+                 examples: list | None = None,
+                 tight: bool = False) -> str:
     """照 MAICA 后端的顺序拼 system：角色 → 相关信息 → 历史结论 → 编剧规范。
 
     顺序照抄后端（`chat_session._utilize_context`）：known_info 在 memory_concl 之前，
@@ -174,6 +176,19 @@ def build_system(known_info: list[str] | str | None = None,
 
     parts.append(SCREENWRITER_SYSTEM.format(role="", emotions=" / ".join(emo_list)).strip())
     return "\n".join(p for p in parts if p.strip())
+
+
+#: 硬长度预算。语料实测：内容总字数中位 30（官方）/36（ds），p90 约 50；
+#: 段数中位 2（官方）/3（ds）。不加这条时编剧会写成小作文（实测 4 段 × 25 字），
+#: 与真人 plan 的内容重合度只有 1.79/4——不是"想不出"，是"说得太多"。
+TIGHT_BUDGET = """【长度纪律】这一条比上面任何一条都容易违反, 请严格执行:
+- 内容**总字数 15~45 字**。超过 50 字就是错的。
+- 段数 1~3 段。**大多数情况只要 2 段**。
+- 一段只放一件事。不要把理由、铺垫、追问堆在一段里。
+- 真相是: 她说话很短。「我也会只爱你一个人」就是一条完整的表达指令。
+  宁可少说、留白, 也不要解释自己为什么这么想。
+- 不要用第三人称称呼自己(不要写「莫妮卡会…」), 一律用「我」。
+"""
 
 
 def render_history(history: list[dict] | None, last_n: int = 8, clip: int = 80) -> str:
@@ -213,7 +228,14 @@ class PlanError(ValueError):
     pass
 
 
-def parse_and_check(raw: str, *, allow_anaphora: bool = False) -> dict:
+#: 内容总字数上限。语料实测：官方中位 30、ds 中位 36、p90 约 50。
+#: 写成机械约束而不是「请尽量简短」——后者实测被无视（4 段 80 字照写）。
+#: 这是**契约**，跟标签白名单同级，超了就重试。
+TOTAL_CHARS_MAX = 60
+
+
+def parse_and_check(raw: str, *, allow_anaphora: bool = False,
+                    total_max: int | None = TOTAL_CHARS_MAX) -> dict:
     """解析编剧输出并做**可机械判断**的校验。返回 ``{"tags","contents","plan","warnings"}``。
 
     只查能确定对错的：格式、标签合法性、段数、内容自足性。
@@ -238,10 +260,21 @@ def parse_and_check(raw: str, *, allow_anaphora: bool = False) -> dict:
     if len(tags) > MAX_SEGMENTS:
         raise PlanError(f"段数 {len(tags)} 超过 {MAX_SEGMENTS}")
 
+    if total_max is not None:
+        total = sum(contract.cjk_len(c) for c in contents)
+        if total > total_max:
+            raise PlanError(
+                f"内容总字数 {total} 超过上限 {total_max}。她说话很短："
+                f"删掉解释、铺垫和自我说明，只留真正要说的事（可以少到 1 段）")
+
     warnings: list[str] = []
     for i, c in enumerate(contents, 1):
         if not contract._CJK_RE.search(c):
             raise PlanError(f"第 {i} 条无中文: {c!r}")
+        # 第三人称自称：实测 deepseek 会写「莫妮卡会…」。内容行是她的自述，
+        # 必须是「我」，否则润色器会把「莫妮卡」当第三人称说出口。
+        if re.search(r"莫妮卡", c) and not re.search(r"^\s*我", c):
+            raise PlanError(f"第 {i} 条用第三人称称呼自己，必须改成「我」: {c!r}")
         if len(c) > 40:
             warnings.append(f"第 {i} 条偏长({len(c)}字)，润色器可能被挤成两句")
         if not allow_anaphora:
