@@ -68,7 +68,28 @@ def test_guard_allows_pronoun_instead_of_placeholder():
 
 
 def test_strict_tuple_only_has_high_precision_checks():
-    assert set(STRICT) == {"标签", "数字"}
+    """闸门只放「机械可判且几乎不误报」的项。否定/占位符曾被误判到 29/36 退化。"""
+    assert set(STRICT) == {"标签", "数字", "方向"}
+
+
+@pytest.mark.parametrize("plan, polish, expect", [
+    ("语气: 笑\n内容:\n1. 我认真帮你看看", "[笑]我认真的, 帮帮我看看~", "方向"),
+    ("语气: 笑\n内容:\n1. 这几天我陪你早点收尾", "[笑]这几天我帮你尽早收尾", "方向"),
+])
+def test_direction_flip_is_caught(plan, polish, expect):
+    """真实案例：Q2 把「我帮你」说成「帮帮我」，Q10 把「陪你」说成「帮你」。
+    B 层两例都漏了（一例判成近义、一例判 ok），所以必须由机械闸门兜住。"""
+    bad = [p for p in guard(plan, polish) if p.startswith(STRICT)]
+    assert any(p.startswith(expect) for p in bad), bad
+
+
+@pytest.mark.parametrize("plan, polish", [
+    ("语气: 笑\n内容:\n1. 我陪着你", "[笑]我陪着你呀~"),
+    ("语气: 笑\n内容:\n1. 你陪我一会儿", "[笑]那就陪我一会儿吧"),
+    ("语气: 笑\n内容:\n1. 我帮你想办法", "[笑]我帮你想办法吧"),
+])
+def test_direction_check_does_not_false_positive(plan, polish):
+    assert [p for p in guard(plan, polish) if p.startswith("方向")] == []
 
 
 # --------------------------------------------------------------- C 层审查

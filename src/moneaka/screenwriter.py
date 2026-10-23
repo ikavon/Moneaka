@@ -131,6 +131,16 @@ SCREENWRITER_SYSTEM = """\
 - 常见结构: 先接住对方的情绪或处境 → 再说内容 → 最后落到「我们」或一个主动提议。
 - 不要为凑段数把一句话硬拆成两段; 也不要把两个不相干的意思并成一段。
 
+## 她的处境与能力边界（写内容时必须守住）
+
+- 她还在游戏里, **没有真实的双手**。她可以陪你、听你、记得你、和你一起想、
+  说她会一直在、约好以后一起做；但她**不能替你做现实里的事**。
+- 所以不要写「我帮你改论文」「我帮你复习」「我帮你收拾」「我帮你做饭」这类。
+  同样意思应该说成: 「我陪你把这件事过一遍」「你写，我在旁边看着」「你念给我听」。
+- 分不清「帮你」和「陪你」时，一律用「陪你」。
+- 她也不会熟练地掌握现实里的具体操作细节（写代码、做菜步骤、旅游攻略）——
+  可以讲她知道的知识，但不要冒充亲自动手做过。
+
 ## 不要做的事
 
 - 不要输出台词本身, 不要输出解释、标题、markdown。
@@ -360,3 +370,19 @@ def make_plan(llm, user_msg: str, *, retries: int = 1,
 
 def tag_list_text(emotions: tuple[str, ...] = EMOTIONS_ZH) -> str:
     return " / ".join(emotions)
+
+def render_direct(llm, plan: str, *, profile: str = "screenwriter",
+                  temperature: float = 0.3) -> str:
+    """让**强模型自己**把表达指令写成台词，绕过本地润色器。
+
+    用途是「最终兜底」：润色器重采 k 次 + 回编剧重写 plan 之后仍然过不了审查时，
+    退回直译会让台词完全没有风格；这时候让强模型直接出一次，保底像个角色在说话。
+
+    注意：它吃的是**和润色器完全一样**的 system + user（`prompts.restyle_system`），
+    这样「谁来写最终输出」是个干净的对照实验，而不是两套不同的指令。
+    """
+    from .prompts import restyle_system
+
+    return llm.complete(profile, restyle_system(few_shot=False),
+                        f"表达指令:\n{plan}\n\n莫妮卡会说:",
+                        temperature=temperature, max_tokens=300)

@@ -25,11 +25,39 @@ def nums(text: str) -> set[str]:
     return set(_DIGITS.findall(text)) | set(_NUMWORD.findall(text))
 
 
-#: 只留「机械可判且几乎不会误报」的两项。**否定词与占位符不再进闸门**：
+#: 只留「机械可判且几乎不会误报」的项。**否定词与占位符不再进闸门**：
 #: 实测 36 条退化样本里 29 条是这两项误报（plan 有 [player] 而她说「你」、
 #: 反问句里的「不」被改写成别的说法）——那不是错误，是正常措辞。
-#: 否定/方向/近义交给 B（强模型复核），它有 88% 查全。
-STRICT = ("标签", "数字")
+#: 否定/近义交给 B（强模型复核），它有 88% 查全。
+#:
+#: 「方向」是后加的：实测 Q2 把「我帮你看看」说成「帮帮我看看」、
+#: Q10 把「陪你」说成「帮你」，B 层两次都没拦住。
+STRICT = ("标签", "数字", "方向")
+
+#: 施受关系：动词 + 受事人称。「我帮你」→「帮帮我」是翻转，「陪你」→「帮你」是换人做事。
+_ROLE = re.compile(r"(帮|给|替|陪|教|送|带|让|跟)(你|您|我)")
+
+
+def _roles(text: str) -> set[tuple[str, str]]:
+    return set(_ROLE.findall(text))
+
+
+def direction_flags(plan_body: str, out_body: str) -> list[str]:
+    """施受方向被改写。只报**确凿的矛盾**，不做“两边不完全一致”这种粗比较。"""
+    bad: list[str] = []
+    a, b = _roles(plan_body), _roles(out_body)
+    # (1) 同动词换了受事：帮你 → 帮我
+    for verb, obj in a:
+        other = "我" if obj != "我" else "你"
+        if (verb, other) in b and (verb, obj) not in b:
+            bad.append(f"方向 {verb}{obj} → {verb}{other}")
+    # (2) 换了个动词把事情揽到自己身上：陪你 → 帮你（且“陪”彻底不见了）
+    for verb, obj in (("陪", "你"), ("陪", "您")):
+        if (verb, obj) in a and (verb, obj) not in b:
+            for v2 in ("帮", "替", "给"):
+                if (v2, obj) in b and (v2, obj) not in a:
+                    bad.append(f"方向 {verb}{obj} → {v2}{obj}")
+    return bad
 
 def check(plan: str, out: str, loose: bool = False) -> list[str]:
     """机械闸门。返回问题列表，空 = 通过。"""
@@ -55,6 +83,7 @@ def check(plan: str, out: str, loose: bool = False) -> list[str]:
         bad.append("否定词变少")
     if out.count("[player]") < len(re.findall(r"\[player\]", plan)):
         bad.append("占位符丢失")
+    bad += direction_flags(plan_body, body)
     if not loose:
         return bad
     # 每段内容至少要有一部分字面落地：用 3-gram 覆盖检查（噪声大，默认关）

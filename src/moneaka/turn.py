@@ -37,6 +37,11 @@ class TurnConfig:
     #: 一轮里最多花几次 B 审查（每次都是一次云调用）。不封顶的话，
     #: 「重采 4 次」会变成 4 次云端往返，交互延迟从 4 秒涨到 15 秒。
     max_audits: int = 2
+    #: 重采仍失败时是否回编剧重写 plan（一次）。关掉就退回纯直译。
+    escalate_to_plan: bool = True
+    #: 最后一道兜底由谁来出：``literal``（直译，无风格）/ ``screenwriter``（强模型直出）。
+    #: 直译保证意思，但没有一丝风格；强模型直出有风格，但会偏离专用润色器。
+    final_writer: str = "screenwriter"
 
 
 @dataclass
@@ -76,8 +81,13 @@ class TurnResult:
     b_trigger: list[str] = field(default_factory=list)
     degraded: bool = False
     candidates: list[str] = field(default_factory=list)
+    #: 重采也救不回来 → 建议回编剧重写 plan（Q10「陪你收尾」那类就是这个原因）
+    need_new_plan: bool = False
     timings: dict[str, float] = field(default_factory=dict)
     error: str = ""
+    escalated: bool = False
+    #: 最终这一句是谁写的：polisher / screenwriter / literal
+    final_source: str = "polisher"
 
     @property
     def ok(self) -> bool:
@@ -119,20 +129,34 @@ def _plan_stage(rt: Runtime, cfg: TurnConfig, user: str,
 
 
 def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
-    """润色 + A + B，失败就重采，最后退化直译。"""
+    """润色 + A + B。失败时**把审查理由回灌**再重写，而不是盲目重采。
+
+    为什么改：原先只是用温度 0.6 再抽一次，B 辛辛苦苦判出来的「帮你→帮我」被丢掉了。
+    盲重采能救回偶发错误，救不了**系统性**错误（同一个 plan 每次都错在同一个地方）。
+    把理由写回 prompt 才是对症：和编剧那边的自修复是同一套思路。
+
+    仍然失败时置 ``res.need_new_plan``，让调用方回编剧重写指令——
+    两次都渲染不出来，说明问题在 plan，不在措辞。
+    """
     t0 = time.time()
-    msgs = [{"role": "user", "content": f"表达指令:\n{res.plan}\n\n莫妮卡会说:"}]
     from .prompts import restyle_system
 
-    msgs = [{"role": "system", "content": restyle_system(few_shot=False)}, *msgs]
+    base_user = f"表达指令:\n{res.plan}\n\n莫妮卡会说:"
+    sys_msg = restyle_system(few_shot=False)
     greedy = GenConfig(temperature=0.0, max_new_tokens=cfg.max_new_tokens)
     samp = GenConfig(temperature=cfg.temperature, max_new_tokens=cfg.max_new_tokens)
 
     best: dict | None = None
     best_seen = ""
     audits = 0
+    hint = ""
     for attempt in range(cfg.k + 1):
-        raw = rt.model.chat([dict(m) for m in msgs], greedy if attempt == 0 else samp)
+        user = base_user if not hint else (
+            base_user + f"\n\n（上一版有问题：{hint}。请重写这条台词，"
+                        f"意思严格照指令，不要改动谁给谁做事。）\n莫妮卡会说:")
+        msgs = [{"role": "system", "content": sys_msg},
+                {"role": "user", "content": user}]
+        raw = rt.model.chat(msgs, greedy if attempt == 0 else samp)
         text, _ = normalize(raw)
         a_flags = [p for p in guard(res.plan, text) if p.startswith(STRICT)] if cfg.use_a else []
         trigger = audit.needs_polish_audit(res.plan, text) if cfg.use_b else []
@@ -154,6 +178,8 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
                     "attempts": attempt, "trigger": trigger}
         if score == 0:
             break
+        # 把这一版的失败原因带进下一版（机械问题优先，它更确定）
+        hint = "；".join(a_flags + b_flags)[:80]
 
     assert best is not None
     res.polish, res.a_flags, res.attempts = best["polish"], best["a"], best["attempts"]
@@ -162,8 +188,10 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
     if best["b"]:
         res.b_verdict, res.b_note = best["b"][0].split(":", 1)[0], best["b"][0].split(":", 1)[-1].strip()
     if best["score"]:
-        res.degraded = True
+        # 重采也救不回来 → 不是措辞问题，是 plan 让下游无法忠实表达
+        res.need_new_plan = True
         res.polish = literal(res.plan)
+        res.degraded = True
     res.timings["润色+A+B"] = time.time() - t0
 
 
@@ -187,4 +215,35 @@ def run_turn(rt: Runtime, cfg: TurnConfig, user: str,
         return res
     step("润色 + 审查")
     _polish_stage(rt, cfg, res)
+
+    # 渲染两次都失败 → 回编剧重写一次。只重写一次，避免来回打转。
+    if res.need_new_plan and cfg.escalate_to_plan:
+        step("编剧重写")
+        hint = "；".join(res.a_flags + [f"{res.b_verdict} {res.b_note}".strip()]).strip()
+        user2 = user + (f"\n\n（上一条表达指令下游无法忠实表达，问题：{hint}。"
+                        f"请把它改成更好说出口的说法，尤其是谁给谁做事要写清楚。）")
+        res.need_new_plan = False
+        res.escalated = True
+        before = res.plan
+        _plan_stage(rt, cfg, user2, history, res)
+        if res.error:
+            res.plan, res.tags, res.contents = before, [], []
+            res.error = ""
+            return res
+        step("润色 + 审查")
+        _polish_stage(rt, cfg, res)
+
+    # 仍然失败 → 最后一道兜底。默认让强模型直出（有风格），可选退回直译（绝对忠实）。
+    if res.degraded and cfg.final_writer == "screenwriter":
+        step("编剧直出")
+        try:
+            text = screenwriter.render_direct(rt.llm, res.plan)
+            text, _ = normalize(text)
+            flags = [p for p in guard(res.plan, text) if p.startswith(STRICT)]
+            if not flags:
+                res.polish = text
+                res.degraded = False
+                res.final_source = "screenwriter"
+        except Exception:  # noqa: BLE001  兜底失败就保持直译
+            pass
     return res
