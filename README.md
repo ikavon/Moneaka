@@ -18,11 +18,9 @@
    MAS / Minecraft / QQ bot / 任意聊天场景
 ```
 
-动机：MAICA 的 DAA4 把"像莫妮卡一样说话"微调进了 397B 的权重里，普通用户跑不起来。
-而**说话方式是低维特征**，小模型学得会；智力才需要大模型。拆开就能同时拿到
-"大模型的脑子 + 莫妮卡的口吻 + 本地零成本"。
+动机：任务拆分。通用模型光靠提示词不可能在角色扮演做的足够好，但是对应场景能给出方向、逻辑答题正确的输出；而把一段话按目标的风格进行调整或许用一个小参数的模型就可以实现。
 
-> 这不是"换个模型做角色扮演"，而是**把风格做成一个可插拔的层**：
+> 把风格做成一个可插拔的层：
 > 润色器无状态、不看历史、不记任何东西，因此可以多实例并发，服务任何 agent。
 
 ---
@@ -35,11 +33,8 @@
 | 语义保真 | ✅ 机械闸门 + 语义复核后，灾难性漂移 **17/206 → 7/206** |
 | 两种服务形态 | ✅ 薄服务 `POST /polish`（无状态）／OpenAI 兼容 `POST /v1/chat/completions` |
 | 聊天测试台 | ✅ Streamlit（可切换"进程内"或"HTTP 服务"两种后端） |
-| 官方基准（12 题 / 99 分） | ⚠️ 只能出自动预评；最终分必须人工打 |
 
-**已知短板**：长指令（>55 字）渲染时模型倾向于照抄指令措辞（相似度 0.58~0.88）；
-它也不会自己判断情绪（标签必须由上游给）；润色器无状态，跨轮一致性靠指令携带。
-详见 [docs/INDEX.md](docs/INDEX.md) 里标注的评测文档。
+**已知短板**：长指令（>55 字）渲染时模型倾向于照抄指令措辞（相似度 0.58~0.88）。
 
 ---
 
@@ -98,25 +93,21 @@ data/                 只有输入类资源（事实卡等）；训练数据/权
 从 [docs/INDEX.md](docs/INDEX.md) 进。三份最该先看：
 
 - [docs/PIPELINE_SINGLE_TURN.md](docs/PIPELINE_SINGLE_TURN.md) —— 一轮到底经过什么
-- [docs/BASELINE.md](docs/BASELINE.md) —— 评测协议与基线（数字都在这里）
-- [docs/JUDGE_POLICY.md](docs/JUDGE_POLICY.md) —— 判官规则（吃过亏之后写死的）
-
-想看效果：直接用 [docs/SHOWCASE_12Q.md](docs/SHOWCASE_12Q.md)（官方基准 12 题的
-「玩家 → 莫妮卡」对照，单轮、无历史、一次生成不挑选）。
+- [docs/BASELINE.md](docs/BASELINE.md) —— 评测协议与基线
+- [docs/JUDGE_POLICY.md](docs/JUDGE_POLICY.md) —— 判官规则
 
 ---
 
 ## 许可
 
-* **代码**：[MIT](LICENSE)。
+* **代码**：MIT。
 * **事实卡 `data/canon/`**：本项目编写，随代码一起发布。
 * **训练数据、权重、LoRA、评测输出**：**不在本仓库内**。它们派生自
-  MAICA 的语料（`maica-tos`），是否可发布仍待与 MAICA 团队确认。
-* 上游教程 `TalkingLikeMonika`（无 LICENSE 文件）不随仓库分发，只留来源链接。
+  MAICA 的语料（`maica-tos`）。
 
 细节见 [LICENSING.md](LICENSING.md)。
 
 ## 相关
 
-- MAICA：<https://github.com/edgeinfinity/MAICA>（本项目是其本地化路线的尝试）
+- MAICA：<https://github.com/edgeinfinity/MAICA>
 - 上游风格教程：<https://github.com/edgeinfinity1/TalkingLikeMonika>
