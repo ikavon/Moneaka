@@ -99,3 +99,76 @@ def check(plan: str, out: str, loose: bool = False) -> list[str]:
     return bad
 
 
+
+
+# ---------------------------------------------------------------------------
+# 标签修复：内容对、标签错时按位重贴，而不是退化直译
+# ---------------------------------------------------------------------------
+# 事故：真实对话 10 轮里 2 轮（20%）因为「标签个数/内容不符」被判失败，重采也救不回来，
+# 最后退化成「直译」——plan 原话 + 标签原样拼，既没标点也没风格。用户看到的就是
+# deepseek 的原文。但那些句子的**内容是对的**，错只在标签，完全可以机械修。
+#
+# 做法：把模型输出里的标签全部剥掉，按句切分，再按 plan 的标签序列逐句贴回去。
+# 句子数与标签数不一致时：句子多了就相邻合并，少了就放弃（不猜）。
+
+#: 按**标点**切句（`contract.split_sentences` 是按标签切的，剥掉标签后只剩一段，
+#: 所以这里必须自己切）。
+_SENT = re.compile(r"[^.。!！?？~～…]*(?:[.。!！?？~～…]+|$)")
+
+
+def _split_by_punct(text: str) -> list[str]:
+    out = []
+    for m in _SENT.finditer(text or ""):
+        s = m.group(0).strip()
+        if s and contract._CJK_RE.search(s):
+            out.append(s)
+    return out
+
+
+def retag(plan: str, out: str) -> str | None:
+    """把 plan 的标签序列按位重贴到 out 的句子上。成功返回新台词，失败返回 None。
+
+    只在「内容可用、标签不对」时用；不改一个字的内容，只换标签与分段。
+    """
+    try:
+        want, _ = parse_tagged_plan(plan)
+    except Exception:  # noqa: BLE001
+        return None
+    if not want:
+        return None
+
+    # 1) 剥掉输出里所有标签，按句切
+    body = contract.TAG_RE.sub("", contract.PLACEHOLDER_RE.sub("\x00", out))
+    body = body.replace("\x00", "[player]")
+    sentences = _split_by_punct(body)
+    if not sentences:
+        return None
+
+    # 2) 句子数与标签数对齐：多了相邻合并，少了放弃
+    n = len(want)
+    if len(sentences) > n:
+        # 均匀合并成 n 组，保持顺序
+        groups: list[list[str]] = [[] for _ in range(n)]
+        for i, s in enumerate(sentences):
+            groups[min(n - 1, i * n // len(sentences))].append(s)
+        sentences = [" ".join(g) for g in groups]
+    elif len(sentences) < n:
+        return None
+
+    line = " ".join(f"[{t}]{s}" for t, s in zip(want, sentences))
+
+    # 3) 修完必须过闸门：标签对、数字对、方向对、格式合法
+    if [m.group(1) for m in contract.TAG_RE.finditer(
+            contract.PLACEHOLDER_RE.sub("\x00", line))] != want:
+        return None
+    if [p for p in check(plan, line) if p.startswith(STRICT)]:
+        return None
+    if not contract.check(line).ok:
+        return None
+    return line
+
+
+def repair_tags(plan: str, out: str) -> tuple[str, bool]:
+    """给调用方的便利函数：能修就修，修不了原样返回。"""
+    fixed = retag(plan, out)
+    return (fixed, True) if fixed else (out, False)

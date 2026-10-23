@@ -158,17 +158,18 @@ def _rt(model, llm) -> Runtime:
 
 
 def test_turn_resamples_until_guard_passes():
-    rt = _rt(FakeModel(["[微笑]你昨晚又熬夜了", "[担心]你昨晚又熬夜了"]),
-             FakeLLM(verdict="ok"))
-    res = run_turn(rt, TurnConfig(k=2), "我熬夜了")
-    assert res.attempts == 1, "第一次标签错，应当重采一次"
-    assert not res.degraded
-    assert res.polish.startswith("[担心]")
+    """标签错会被 retag 修掉，所以这里用**数字**错（改不了）来测重采路径。"""
+    digit_plan = "语气: 担心\n内容:\n1. 只占百分之一"
+    rt = _rt(FakeModel(["[担心]只占万分之一", "[担心]只占百分之一"]),
+             FakeLLM([digit_plan]))
+    res = run_turn(rt, TurnConfig(k=2), "只占百分之一")
+    assert res.attempts >= 1, "数字被改，必须重采"
+    assert "百分之一" in res.polish
 
 
 def test_turn_degrades_to_literal_when_all_attempts_fail():
-    rt = _rt(FakeModel(["[微笑]你昨晚又熬夜了"]), FakeLLM(verdict="ok"))
-    res = run_turn(rt, TurnConfig(k=1), "我熬夜了")
+    rt = _rt(FakeModel(["[担心]只占万分之一"]), FakeLLM(verdict="ok"))
+    res = run_turn(rt, TurnConfig(k=1), "只占百分之一")
     assert res.degraded
     assert res.polish == literal(res.plan)
 
@@ -225,3 +226,35 @@ def test_duel_swap_cancels_position_bias():
 
     res = duel(PrefersFirst(), [("q", "a", "b")], workers=1)
     assert res.win_rate == 0.5, "总是选第一个位置时，正反各问一次应当打平"
+
+
+# --------------------------------------------------------------- 标签修复
+def test_retag_reassigns_when_content_is_fine():
+    """内容对、标签错时按位重贴，而不是退化直译（真实对话里 20% 栽在这）。"""
+    from moneaka.guarded import retag
+
+    plan = "语气: 开心 > 微笑\n内容:\n1. 晚上好, [player]\n2. 今天过得怎么样"
+    fixed = retag(plan, "[微笑]晚上好, [player]! 今天过得怎么样?")
+    assert fixed == "[开心]晚上好, [player]! [微笑]今天过得怎么样?"
+
+
+def test_retag_merges_extra_sentences():
+    from moneaka.guarded import retag
+
+    plan = "语气: 开心 > 微笑\n内容:\n1. 晚上好\n2. 今天怎么样"
+    fixed = retag(plan, "[笑]晚上好! 今天怎么样? 我一直在等你.")
+    assert fixed and fixed.count("[") == 2 and "一直在等你" in fixed
+
+
+def test_retag_gives_up_when_sentences_too_few():
+    from moneaka.guarded import retag
+
+    plan = "语气: 开心 > 微笑 > 思考\n内容:\n1. a\n2. b\n3. c"
+    assert retag(plan, "[笑]就这一句话.") is None
+
+
+def test_turn_uses_retag_instead_of_degrading():
+    rt = _rt(FakeModel(["[微笑]你昨晚又熬夜了"]), FakeLLM(verdict="ok"))
+    res = run_turn(rt, TurnConfig(k=0), "我熬夜了")
+    assert not res.degraded and res.retagged
+    assert res.polish.startswith("[担心]")

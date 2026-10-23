@@ -15,7 +15,7 @@ from typing import Any
 
 from . import audit, screenwriter
 from .destyle_tags import parse_tagged_plan
-from .guarded import STRICT, check as guard
+from .guarded import STRICT, check as guard, retag
 from .localhf import GenConfig, get_model
 from .normalize import normalize
 
@@ -95,6 +95,8 @@ class TurnResult:
     final_source: str = "polisher"
     #: 这一轮的内部记录，供下一轮交给编剧（agent 化的连续历史）
     log_line: str = ""
+    #: 是否靠「按位重贴标签」救回来的（说明模型标签不稳，但内容可用）
+    retagged: bool = False
 
     @property
     def ok(self) -> bool:
@@ -201,6 +203,12 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
         raw = rt.model.chat(msgs, greedy if attempt == 0 else samp)
         text, _ = normalize(raw)
         a_flags = [p for p in guard(res.plan, text) if p.startswith(STRICT)] if cfg.use_a else []
+        if a_flags and all(p.startswith("标签") for p in a_flags):
+            # 内容对、只是标签错 → 按位重贴，不要浪费一次重采，更不要退化直译
+            fixed = retag(res.plan, text)
+            if fixed:
+                text, a_flags = fixed, []
+                res.retagged = True
         trigger = audit.needs_polish_audit(res.plan, text) if cfg.use_b else []
         if trigger and audits >= cfg.max_audits:
             trigger = []          # 预算用完：本轮不再送审，只留机械检查

@@ -57,20 +57,31 @@ def test_bad_plan_is_422_not_silently_generated():
     assert r.status_code == 422
 
 
-def test_retry_fixes_missing_tag_then_ok():
-    c = client(["[微笑]你昨晚又熬夜了", "[担心]你昨晚又熬夜了"])
-    r = c.post("/polish", json={"plan": PLAN, "k": 2})
-    body = r.json()
-    assert body["ok"] and body["attempts"] == 1
+def test_missing_tag_is_retagged_not_retried():
+    """标签错不再靠重采，也不再退化直译——内容对就按位重贴。"""
+    c = client(["[微笑]你昨晚又熬夜了"])
+    body = c.post("/polish", json={"plan": PLAN, "k": 2}).json()
+    assert body["ok"] and body["attempts"] == 0
+    assert body["line"].startswith("[担心]")
+
+
+def test_retry_fixes_digit_drift():
+    c = client(["[担心]你只占万分之一", "[担心]你只占百分之一"])
+    body = c.post("/polish",
+                  json={"plan": "语气: 担心\n内容:\n1. 你只占百分之一", "k": 2}).json()
+    assert body["ok"] and body["attempts"] >= 1
 
 
 def test_degraded_still_returns_usable_line():
-    """全失败时返回直译，而不是错误码——调用方要的是能用的句子。"""
-    c = client(["[微笑]你昨晚又熬夜了"])
-    r = c.post("/polish", json={"plan": PLAN, "k": 1})
+    """全失败时返回直译，而不是错误码——调用方要的是能用的句子。
+
+    用数字错（retag 修不了）来触发退化。
+    """
+    c = client(["[担心]只占万分之一"])
+    r = c.post("/polish", json={"plan": "语气: 担心\n内容:\n1. 只占百分之一", "k": 1})
     body = r.json()
     assert body["ok"] is False and body["degraded"] is True
-    assert body["line"].startswith("[担心]") and "熬夜" in body["line"]
+    assert "百分之一" in body["line"]
     assert body["problems"]
 
 
