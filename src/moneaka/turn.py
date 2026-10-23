@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import audit, contract, screenwriter
+from . import audit, screenwriter
 from .destyle_tags import parse_tagged_plan
 from .guarded import STRICT, check as guard
 from .localhf import GenConfig, get_model

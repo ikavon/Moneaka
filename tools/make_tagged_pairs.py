@@ -21,7 +21,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from moneaka import contract  # noqa: E402
-from moneaka.destyle_tags import MAX_SEGMENTS, SegmentError, destyle_one, split_tagged  # noqa: E402
 from moneaka.llm import LLM  # noqa: E402
 
 

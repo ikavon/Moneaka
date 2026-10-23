@@ -19,7 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from moneaka import audit, dataset, screenwriter  # noqa: E402
-from moneaka.destyle_tags import parse_tagged_plan  # noqa: E402
 from moneaka.llm import LLM  # noqa: E402
 
 

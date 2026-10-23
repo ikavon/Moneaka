@@ -165,8 +165,7 @@ def parse_answers(md_path: Path) -> tuple[dict[str, str], dict[str, str], list[s
     return best, worst, tids
 
 
-def grade(md_path: Path, key_path: Path, *, want_agreement: bool, pairs: list[tuple[str, str]],
-          sample: int) -> int:
+def grade(md_path: Path, key_path: Path, *, want_agreement: bool, sample: int) -> int:
     key = json.loads(key_path.read_text(encoding="utf-8"))
     best_lab, worst_lab, tids = parse_answers(md_path)
     if not best_lab:
@@ -245,7 +244,7 @@ def main() -> int:
         key_path = Path(args.key)
         return grade(Path(args.grade), key_path,
                      want_agreement=not args.no_agreement,
-                     pairs=[], sample=args.sample)
+                     sample=args.sample)
 
     if args.mode == "convo":
         convos = build_conversations(args.name, Path(args.pairs), args.min_turns)

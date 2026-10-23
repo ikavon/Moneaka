@@ -127,8 +127,7 @@ def _verify_merge(model, adapter: str) -> None:
         raise SystemExit("合并自检失败，基座不可信，中止")
 
 
-def build_pref_rows(samples: list[dataset.Sample], axes: list[str],
-                    held_only: bool = True, seed: int = 0):
+def build_pref_rows(samples: list[dataset.Sample], axes: list[str], seed: int = 0):
     """每条样本 × 每条轴 = 一个偏序对。prompt 与 SFT 完全一致（短 system）。"""
     rows = []
     for si, s in enumerate(samples):

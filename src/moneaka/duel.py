@@ -73,7 +73,6 @@ def duel(
     items: list[tuple[str, str, str]],
     *,
     profile: str = "judge",
-    seed: int = 0,
     swap: bool = True,
     max_items: int | None = None,
     workers: int = 8,
@@ -131,7 +130,7 @@ def duel(
     return res
 
 
-def calibrate(llm: LLM, n: int = 20, *, profile: str = "judge", seed: int = 0) -> dict:
+def calibrate(llm: LLM, n: int = 20, *, profile: str = "judge") -> dict:
     """用官方 chosen/rejected 当标准答案校准评委。
 
     返回准确率与 Wilson 区间。低于 ~70% 就别用这个评委做结论，
@@ -139,7 +138,7 @@ def calibrate(llm: LLM, n: int = 20, *, profile: str = "judge", seed: int = 0) -
     """
     data = corpus.contrasts()[:n]
     items = [(t.user, t.chosen, rej) for t, rej in data]
-    res = duel(llm, items, profile=profile, seed=seed, swap=True)
+    res = duel(llm, items, profile=profile, swap=True)
     lo, hi = res.ci95()
     return {
         "n_pairs": len(items),
@@ -151,15 +150,14 @@ def calibrate(llm: LLM, n: int = 20, *, profile: str = "judge", seed: int = 0) -
 
 
 def compare_arms(llm: LLM, rows: list[dict], arm_a: str, arm_b: str, *,
-                 profile: str = "judge", sample: int | None = None,
-                 seed: int = 0) -> dict:
+                 profile: str = "judge", sample: int | None = None) -> dict:
     """两个臂逐条对打，返回 A 的胜率（1.0 = A 全胜，0.5 = 打平）。"""
     items = [(r.get("user", ""), r[arm_a], r[arm_b])
              for r in rows if (r.get(arm_a) or "").strip() and (r.get(arm_b) or "").strip()]
     if sample:
-        rng = random.Random(seed)
+        rng = random.Random(0)
         items = rng.sample(items, min(sample, len(items)))
-    res = duel(llm, items, profile=profile, seed=seed)
+    res = duel(llm, items, profile=profile)
     lo, hi = res.ci95()
     return {
         "a": arm_a, "b": arm_b, "n": res.n,
@@ -170,14 +168,13 @@ def compare_arms(llm: LLM, rows: list[dict], arm_a: str, arm_b: str, *,
 
 
 def win_matrix(llm: LLM, rows: list[dict], arms: tuple[str, ...], *,
-               profile: str = "judge", sample: int | None = None,
-               seed: int = 0) -> dict:
+               profile: str = "judge", sample: int | None = None) -> dict:
     """所有两两组合的胜率矩阵（只算上三角，下三角取补）。"""
     out: dict[str, dict] = {a: {} for a in arms}
     for i, a in enumerate(arms):
         out[a][a] = 0.5
         for b in arms[i + 1:]:
-            r = compare_arms(llm, rows, a, b, profile=profile, sample=sample, seed=seed)
+            r = compare_arms(llm, rows, a, b, profile=profile, sample=sample)
             out[a][b] = r["win_rate"]
             out[b][a] = None if r["win_rate"] is None else round(1 - r["win_rate"], 3)
             out[b].setdefault("_n", r["n"])

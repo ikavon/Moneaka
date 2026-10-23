@@ -27,7 +27,6 @@ import math
 import re
 from collections import Counter
 
-from .contract import TAG_RE
 
 #: 半角体系下句尾常见的语气词（§4 的分析对象）
 _TAIL_PARTICLES = ("啦", "嘛", "哦", "呢", "呀", "呗", "吧", "啊", "噢", "嗯")

@@ -16,7 +16,7 @@ from collections import Counter
 
 from . import contract, corpus, destyle as destyle_mod, evaluate, prompts, restyle
 from .llm import LLM, dump_jsonl, load_jsonl
-from .normalize import NormStats, normalize
+from .normalize import normalize
 
 DATA = "data"
 PAIRS = os.path.join(DATA, "pairs", "plan.jsonl")

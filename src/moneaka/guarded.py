@@ -31,12 +31,6 @@ def nums(text: str) -> set[str]:
 #: 否定/方向/近义交给 B（强模型复核），它有 88% 查全。
 STRICT = ("标签", "数字")
 
-#: 高精度检查：实测这些在 206 条上触发 19.4%，且每条触发都是真问题。
-#: 「段落没落地」那条（3-gram 覆盖）触发率高达 54%，绝大多数是模型换了语序就被判死，
-#: 属于误报，只在 --loose 时启用。
-PRECISE = ("标签", "数字", "否定", "占位符")
-
-
 def check(plan: str, out: str, loose: bool = False) -> list[str]:
     """机械闸门。返回问题列表，空 = 通过。"""
     bad: list[str] = []
@@ -51,8 +45,12 @@ def check(plan: str, out: str, loose: bool = False) -> list[str]:
     body = contract.TAG_RE.sub("", body)
     plan_body = "；".join(contents)
 
+    # 双向比对：少了是丢信息，多了是编数字。只查「少」会漏掉「凭空加一个数」。
     if not nums(plan_body) <= nums(body):
         bad.append(f"数字丢失 {sorted(nums(plan_body) - nums(body))}")
+    if not nums(body) <= nums(plan_body):
+        # 消息必须以「数字」开头：调用方用 startswith(STRICT) 过滤，前缀不对就漏拦
+        bad.append(f"数字凭空多出 {sorted(nums(body) - nums(plan_body))}")
     if len(_NEG.findall(body)) < len(_NEG.findall(plan_body)):
         bad.append("否定词变少")
     if out.count("[player]") < len(re.findall(r"\[player\]", plan)):
