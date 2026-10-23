@@ -231,7 +231,10 @@ _LONG_FORM = re.compile(
     # 文学/作品讨论：实测「想聊一聊《红与黑》」被判成闲聊，60 字把整段见解挤掉了
     r"小说|诗歌|诗集|作品|作者|文学|剧情|人物|角色|情节|结局|台词|电影|动漫|漫画|"
     r"见解|看法|评价|理解|象征|隐喻|主题|思想|哲学|历史|主义|流派|翻译|"
-    r"大学|专业|学科|物理|数学|生物|化学|天文")
+    r"大学|专业|学科|物理|数学|生物|化学|天文|"
+    # 「你喜欢吃什么」官方细则要 素食/营养建议/未来餐饮/甜品 四条子链，
+    # 按闲聊给 60 字会把内容砍掉一半（实测 50 字 vs DAA4 的 214 字）
+    r"吃什么|食物|甜食|素食|营养|菜谱")
 
 
 def length_budget(user_msg: str) -> tuple[int, int]:
@@ -240,7 +243,10 @@ def length_budget(user_msg: str) -> tuple[int, int]:
     取值依据：润色器训练语料里段数最多 6、内容 25 字/段以上就容易被挤成两句。
     所以长答给 5 段 × 22 字 ≈ 110 字，既不超语料分布，又装得下三条子链。
     """
-    return (110, 5) if _LONG_FORM.search(user_msg or "") else (TOTAL_CHARS_MAX, 3)
+    # 实测：DAA4 在知识类题上平均 144~214 字，我们压到 110 就信息量不足
+    # （Q3 咖啡 63 vs 144、Q6 吃什么 50 vs 214）。放宽到 150 字 / 6 段——
+    # 6 段是训练语料的上限，润色器见过，不会因此崩格式。
+    return (150, 6) if _LONG_FORM.search(user_msg or "") else (TOTAL_CHARS_MAX, 3)
 
 
 def render_log(log: list[str] | None, last_n: int = 4) -> str:
