@@ -37,8 +37,9 @@
 | 聊天测试台 | ✅ Streamlit（可切换"进程内"或"HTTP 服务"两种后端） |
 | 官方基准（12 题 / 99 分） | ⚠️ 只能出自动预评；最终分必须人工打 |
 
-**已知短板**：长指令（>55 字）渲染时模型倾向于照抄指令措辞（相似度 0.58~0.88）。
-详见 [docs/HANDOFF_EDGE.md](docs/HANDOFF_EDGE.md) 的"已知限制"。
+**已知短板**：长指令（>55 字）渲染时模型倾向于照抄指令措辞（相似度 0.58~0.88）；
+它也不会自己判断情绪（标签必须由上游给）；润色器无状态，跨轮一致性靠指令携带。
+详见 [docs/INDEX.md](docs/INDEX.md) 里标注的评测文档。
 
 ---
 
@@ -100,17 +101,17 @@ data/                 只有输入类资源（事实卡等）；训练数据/权
 - [docs/BASELINE.md](docs/BASELINE.md) —— 评测协议与基线（数字都在这里）
 - [docs/JUDGE_POLICY.md](docs/JUDGE_POLICY.md) —— 判官规则（吃过亏之后写死的）
 
-给 MAICA 团队的材料：[docs/HANDOFF_EDGE.md](docs/HANDOFF_EDGE.md)、
-[docs/SAMPLES_FOR_EDGE.md](docs/SAMPLES_FOR_EDGE.md)。
+想看效果：直接用 [docs/SHOWCASE_12Q.md](docs/SHOWCASE_12Q.md)（官方基准 12 题的
+「玩家 → 莫妮卡」对照，单轮、无历史、一次生成不挑选）。
 
 ---
 
 ## 许可
 
-* **代码**：待定（建议 MIT，等你确认）。
+* **代码**：[MIT](LICENSE)。
 * **事实卡 `data/canon/`**：本项目编写，随代码一起发布。
 * **训练数据、权重、LoRA、评测输出**：**不在本仓库内**。它们派生自
-  MAICA 的语料（`maica-tos`），是否可发布仍在与 MAICA 团队确认。
+  MAICA 的语料（`maica-tos`），是否可发布仍待与 MAICA 团队确认。
 * 上游教程 `TalkingLikeMonika`（无 LICENSE 文件）不随仓库分发，只留来源链接。
 
 细节见 [LICENSING.md](LICENSING.md)。

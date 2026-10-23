@@ -9,8 +9,7 @@
 | [`../README.md`](../README.md) | 项目概览、快速开始、repo 结构 |
 | [`DESIGN.md`](DESIGN.md) | 为什么把「说什么」和「怎么说」拆开 |
 | [`PIPELINE_SINGLE_TURN.md`](PIPELINE_SINGLE_TURN.md) ✅ | 单轮流程规格：每一步、每个字段、每层各自看得到什么 |
-| [`HANDOFF_EDGE.md`](HANDOFF_EDGE.md) ✅ | 给 MAICA 团队的材料（形态、数字、坑、想谈的事） |
-| [`SAMPLES_FOR_EDGE.md`](SAMPLES_FOR_EDGE.md) ✅ | 实际输出样例（好样本 + 语义失手的全部） |
+| [`SHOWCASE_12Q.md`](SHOWCASE_12Q.md) ✅ | 官方基准 12 题的实际输出（玩家 → 莫妮卡） |
 
 ## 看数字
 
@@ -59,7 +58,6 @@
 | [`STAGE0_RESULTS.md`](STAGE0_RESULTS.md) | 零样本阶段的探索（评测协议当时还没定） |
 | [`STAGE1_RESULTS.md`](STAGE1_RESULTS.md) | 第一版 LoRA（数据泄漏 bug 之前） |
 | [`STAGE2_SCHEMA.md`](STAGE2_SCHEMA.md) | 受控 schema 的设计（仍然有效，但数字以 BASELINE 为准） |
-| [`ASK_MAICA.md`](ASK_MAICA.md) ⚠️ | 226 条数据时期写的，已过时；被 HANDOFF_EDGE 取代 |
 | [`HUMAN_EVAL.md`](HUMAN_EVAL.md) / [`HUMAN_EVAL_CONVO.md`](HUMAN_EVAL_CONVO.md) | 人工盲测表（n=20 时代的数字已作废） |
 | [`DATA_INVENTORY.md`](DATA_INVENTORY.md) | 早期对官方数据的盘点 |
 | [`PLAN_NEXT.md`](PLAN_NEXT.md) | 阶段计划与执行状态 |
