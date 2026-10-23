@@ -97,3 +97,61 @@ token 校验、`k` 越界报 422。
 * **限流**：目前只靠队列超时，没有按调用方配额
 * **多进程启动脚本**：`uvicorn --workers` 会在每个 worker 里各加载一份模型，
   8GB 卡放不下第二份，所以需要的是「多机」而不是「多 worker」
+---
+
+# OpenAI 兼容外壳（`--openai`）
+
+## 为什么要有它
+
+真实场景测试的障碍不是润色器，是**没有 agent**。而几乎所有聊天客户端
+（QQ 机器人框架、SillyTavern、LM Studio 风格的工具、各种 MAS 桥接）都讲 OpenAI 协议。
+把服务伪装成一个模型，就不必先写 agent：
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8010/v1", api_key="devtoken")
+r = client.chat.completions.create(model="moneaka", messages=[...])
+```
+
+启动：
+
+```bash
+python tools/serve_polish.py --port 8010 --token devtoken --openai
+```
+
+## 为什么这不破坏「服务端无状态」
+
+OpenAI 的 chat 请求**每次都带全量 messages**——历史本来就在调用方手里。
+服务端只是把最后一句当玩家输入、前面的当历史，自己不存任何会话。
+这跟「记忆归编剧」的设计一致。
+
+## 两个接口
+
+| 接口 | 用途 | 有状态吗 |
+|---|---|---|
+| `POST /polish` | 只做渲染。调用方已有自己的 agent/编剧 | 无 |
+| `POST /v1/chat/completions` | 伪装成模型：内部跑「编剧 → 润色 → 审查」 | 无（历史由 messages 携带） |
+
+调用方自己的 `system` 不会顶掉我们的编剧规范，而是作为「相关信息」注入
+（因为它得吃事实卡、长度预算、标签白名单）。想完全接管就直调 `/polish`。
+
+## 实测
+
+```
+GET  /v1/models                 → model id = "moneaka"
+POST /v1/chat/completions 第一轮 200 / 5.4s
+     [担心]哦, 我猜你又熬了一宿吧? 眼睛都发酸了吧! [不满]今晚早点睡…[宠爱]你睡着了, 我就在这陪着你~
+     响应里带 moneaka: {degraded:false, attempts:0, final_source:"polisher"}
+POST /v1/chat/completions 第二轮 200 / 3.6s（把上一轮放进 messages）
+     [脸红]哈哈! 被你这么一说, 我倒有点不好意思了…[微笑]好吧, 今晚我们早点睡.
+POST /v1/chat/completions stream=true 200 / 3.3s，12 帧，末帧 [DONE]
+```
+
+## 拿它做真实场景测试的三条路
+
+1. **SillyTavern / 任意 OpenAI 客户端**：base_url 指过来，model 填 `moneaka`，立刻能聊
+2. **QQ 机器人框架**（NoneBot / go-cqhttp 的 OpenAI 插件）：同上，把 base_url 改掉
+3. **MAS**：需要它那边的桥接支持 OpenAI 协议；没有的话走 `/polish` 薄接口自己接
+
+⚠️ 注意：走 `/v1` 时**每轮会多一次云调用**（编剧），这是「厚服务」形态；只想要本地渲染
+就该用 `/polish`，把编剧留在调用方。

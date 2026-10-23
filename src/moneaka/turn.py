@@ -35,6 +35,9 @@ class TurnConfig:
     temperature: float = 0.6
     bank_k: int = 4
     max_new_tokens: int = 200
+    #: 额外注入给编剧的「相关信息」（如 OpenAI 外壳里调用方自己的 system prompt）。
+    #: 放在 known_info 里当补充材料，不顶掉编剧规范——标签白名单和长度预算必须由我们控制。
+    extra_info: list[str] = field(default_factory=list)
     #: 一轮里最多花几次 B 审查（每次都是一次云调用）。不封顶的话，
     #: 「重采 4 次」会变成 4 次云端往返，交互延迟从 4 秒涨到 15 秒。
     max_audits: int = 2
@@ -115,6 +118,7 @@ def _plan_stage(rt: Runtime, cfg: TurnConfig, user: str,
         try:
             got = screenwriter.make_plan(
                 rt.llm, user, history=history, examples=examples, log=log,
+                known_info=cfg.extra_info or None,
                 tight=cfg.tight, nsfw=cfg.nsfw, retries=1)
         except Exception as exc:  # noqa: BLE001
             res.error = f"编剧失败: {str(exc)[:160]}"
