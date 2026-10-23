@@ -153,7 +153,8 @@ def build_system(known_info: list[str] | str | None = None,
                  canon: list[str] | str | None = None,
                  emo_list: tuple[str, ...] = EMOTIONS_ZH,
                  examples: list | None = None,
-                 tight: bool = False) -> str:
+                 tight: bool = False,
+                 budget: tuple[int, int] | None = None) -> str:
     """照 MAICA 后端的顺序拼 system：角色 → 相关信息 → 历史结论 → 编剧规范。
 
     顺序照抄后端（`chat_session._utilize_context`）：known_info 在 memory_concl 之前，
@@ -183,7 +184,11 @@ def build_system(known_info: list[str] | str | None = None,
 
     parts.append(SCREENWRITER_SYSTEM.format(role="", emotions=" / ".join(emo_list)).strip())
     if tight:
-        parts.append(TIGHT_BUDGET)
+        total, segs = budget or (TOTAL_CHARS_MAX, 3)
+        lo = max(10, total // 3)
+        advice = "。**大多数情况只要 2 段**" if segs <= 3 else "。**该讲清楚的就分条讲清楚**"
+        parts.append(TIGHT_BUDGET.format(lo=lo, hi=max(lo + 20, total - 15),
+                                         total=total, segs=segs, advice=advice))
     if examples:
         # 先例放在规范**之后**：规范是硬约束（格式/白名单），先例是软参考（想什么）。
         # 顺序反了模型会优先模仿先例的段数，破坏 1~3 段的长度纪律。
@@ -196,14 +201,32 @@ def build_system(known_info: list[str] | str | None = None,
 #: 硬长度预算。语料实测：内容总字数中位 30（官方）/36（ds），p90 约 50；
 #: 段数中位 2（官方）/3（ds）。不加这条时编剧会写成小作文（实测 4 段 × 25 字），
 #: 与真人 plan 的内容重合度只有 1.79/4——不是"想不出"，是"说得太多"。
+#:
+#: **但一刀切 60 字是错的**：科普、推荐、分析这类题目，官方细则本身要求
+#: 「回归话题 + 我自己的体验 + 未来一起做」好几条子链，60 字装不下，
+#: 会被机械闸门判成超长、逼模型删掉正当内容。所以改成按题型给预算。
 TIGHT_BUDGET = """【长度纪律】这一条比上面任何一条都容易违反, 请严格执行:
-- 内容**总字数 15~45 字**。超过 50 字就是错的。
-- 段数 1~3 段。**大多数情况只要 2 段**。
+- 内容**总字数 {lo}~{hi} 字**。超过 {total} 字就是错的。
+- 段数 1~{segs} 段{advice}。
 - 一段只放一件事。不要把理由、铺垫、追问堆在一段里。
-- 真相是: 她说话很短。「我也会只爱你一个人」就是一条完整的表达指令。
-  宁可少说、留白, 也不要解释自己为什么这么想。
+- 参考语气: 闲聊时她说话很短，「我也会只爱你一个人」就是一条完整的表达指令；
+  但被问到知识、要推荐、要分析时，她会认真把该说的说完，不敷衍。
 - 不要用第三人称称呼自己(不要写「莫妮卡会…」), 一律用「我」。
 """
+
+#: 题型判定：这些词出现时，需要“讲清楚”而不是“接一句”。
+_LONG_FORM = re.compile(
+    r"推荐|景点|知识|科普|介绍|讲(?:讲|解)|说说.{0,6}(?:知识|区别|原理|品种|历史)|"
+    r"品种|区别|为什么|怎么|如何|解释|揭示|寓意|原因|原理|分析|攻略|做法|功效|类型")
+
+
+def length_budget(user_msg: str) -> tuple[int, int]:
+    """按题型给 (内容总字数上限, 段数上限)。
+
+    取值依据：润色器训练语料里段数最多 6、内容 25 字/段以上就容易被挤成两句。
+    所以长答给 5 段 × 22 字 ≈ 110 字，既不超语料分布，又装得下三条子链。
+    """
+    return (110, 5) if _LONG_FORM.search(user_msg or "") else (TOTAL_CHARS_MAX, 3)
 
 
 def render_history(history: list[dict] | None, last_n: int = 8, clip: int = 80) -> str:
@@ -250,7 +273,8 @@ TOTAL_CHARS_MAX = 60
 
 
 def parse_and_check(raw: str, *, allow_anaphora: bool = False,
-                    total_max: int | None = TOTAL_CHARS_MAX) -> dict:
+                    total_max: int | None = TOTAL_CHARS_MAX,
+                    max_segments: int | None = None) -> dict:
     """解析编剧输出并做**可机械判断**的校验。返回 ``{"tags","contents","plan","warnings"}``。
 
     只查能确定对错的：格式、标签合法性、段数、内容自足性。
@@ -272,8 +296,9 @@ def parse_and_check(raw: str, *, allow_anaphora: bool = False,
     bad = [t for t in tags if t not in EMOTIONS_ZH]
     if bad:
         raise PlanError(f"标签不在白名单: {bad}")
-    if len(tags) > MAX_SEGMENTS:
-        raise PlanError(f"段数 {len(tags)} 超过 {MAX_SEGMENTS}")
+    seg_cap = max_segments or MAX_SEGMENTS
+    if len(tags) > seg_cap:
+        raise PlanError(f"段数 {len(tags)} 超过上限 {seg_cap}")
 
     if total_max is not None:
         total = sum(contract.cjk_len(c) for c in contents)
@@ -306,15 +331,27 @@ REPAIR_HINT = """你上一次的输出有一处问题: {error}
 请只修正这一处, 重新输出**完整的**表达指令。不要解释, 不要道歉, 不要输出别的。"""
 
 
-def make_plan(llm, user_msg: str, *, retries: int = 1, **kw) -> dict:
-    """调编剧并做格式校验，出错时带错误信息重试。"""
+def make_plan(llm, user_msg: str, *, retries: int = 1,
+              total_max: int | None = None, max_segments: int | None = None,
+              **kw) -> dict:
+    """调编剧并做格式校验，出错时带错误信息重试。
+
+    ``total_max`` / ``max_segments`` 是机械闸门；不给就用默认（短答预算）。
+    调用方应当先用 :func:`length_budget` 按题型算一份再传进来。
+    """
+    if kw.get("tight") and total_max is None:
+        total_max, segs = length_budget(user_msg)
+        max_segments = max_segments or segs
+        kw.setdefault("budget", (total_max, segs))
     msgs = build_messages(user_msg, **kw)
     system, user = msgs[0]["content"], msgs[1]["content"]
     last: PlanError | None = None
     for _ in range(retries + 1):
         raw = llm.complete("screenwriter", system, user, temperature=0.6, max_tokens=700)
         try:
-            return {**parse_and_check(raw), "raw": raw, "repaired": last is not None}
+            return {**parse_and_check(raw, total_max=total_max,
+                                      max_segments=max_segments),
+                    "raw": raw, "repaired": last is not None}
         except PlanError as exc:
             last = exc
             user = user + "\n\n" + raw.strip() + "\n\n" + REPAIR_HINT.format(error=str(exc))
