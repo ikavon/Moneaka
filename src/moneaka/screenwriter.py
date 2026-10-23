@@ -370,19 +370,3 @@ def make_plan(llm, user_msg: str, *, retries: int = 1,
 
 def tag_list_text(emotions: tuple[str, ...] = EMOTIONS_ZH) -> str:
     return " / ".join(emotions)
-
-def render_direct(llm, plan: str, *, profile: str = "screenwriter",
-                  temperature: float = 0.3) -> str:
-    """让**强模型自己**把表达指令写成台词，绕过本地润色器。
-
-    用途是「最终兜底」：润色器重采 k 次 + 回编剧重写 plan 之后仍然过不了审查时，
-    退回直译会让台词完全没有风格；这时候让强模型直接出一次，保底像个角色在说话。
-
-    注意：它吃的是**和润色器完全一样**的 system + user（`prompts.restyle_system`），
-    这样「谁来写最终输出」是个干净的对照实验，而不是两套不同的指令。
-    """
-    from .prompts import restyle_system
-
-    return llm.complete(profile, restyle_system(few_shot=False),
-                        f"表达指令:\n{plan}\n\n莫妮卡会说:",
-                        temperature=temperature, max_tokens=300)

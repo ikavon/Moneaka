@@ -36,7 +36,6 @@ from moneaka.localhf import GenConfig, get_model  # noqa: E402
 from moneaka.normalize import normalize  # noqa: E402
 from moneaka.prompts import restyle_system  # noqa: E402
 from moneaka import screenwriter  # noqa: E402
-from maica_client import MaicaConfig, complete as maica_complete  # noqa: E402
 
 ASK = """你在比较两段「莫妮卡」的回复, 判断哪一段更像她。
 她是 DDLC 里的角色, 游戏里走出来的虚拟女友, 深爱玩家。
@@ -61,14 +60,23 @@ def main() -> int:
     ap.add_argument("--adapter", default="data/adapters/run8")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--out", default="data/runs/direct_vs_polish.jsonl")
-    ap.add_argument("--judge", default="maica", choices=["maica", "strong"],
-                    help="maica=DAA4(1次/分钟, 无自偏好); strong=同一个 deepseek(快但有自偏好)")
+    ap.add_argument("--judge", default="strong",
+                    help="判官用哪个 profile（默认 strong）。**不要用 DAA4**——"
+                         "它只有扮演莫妮卡这一个用途，没有评测能力")
+    ap.add_argument("--rescore", action="store_true",
+                    help="不重新生成，只对已有的 jsonl 重新判")
     args = ap.parse_args()
+
+    llm = LLM()
+    out_path0 = ROOT / args.out
+    if args.rescore and out_path0.is_file():
+        rows = [json.loads(l) for l in open(out_path0, encoding="utf-8")]
+        print(f"复用已有对照 {len(rows)} 条")
+        return judge(rows, llm, args)
 
     samples, _ = dataset.build(args.pairs)
     pick = samples[: args.n]
     model = get_model(args.base, adapter=args.adapter)
-    llm = LLM()
     sys_prompt = restyle_system(few_shot=False)
     greedy = GenConfig(temperature=0.0, max_new_tokens=220)
 
@@ -86,9 +94,12 @@ def main() -> int:
                      "tag_ok_polisher": tags_of(a) == want,
                      "tag_ok_screenwriter": tags_of(b) == want})
     print(f"生成完毕 {len(rows)} 条")
+    return judge(rows, llm, args)
 
-    # 判官：每对正反各问一次不可行（DAA4 一分钟一次），改为按题号奇偶换位置
-    cfg = MaicaConfig.from_env()
+
+def judge(rows: list[dict], llm, args) -> int:
+    # 判官：按题号奇偶换位置，抵消位置偏差（同一份答案正反各问一次更稳，但成本翻倍）
+    cfg = None
     wins = 0
     judged = 0
     for i, r in enumerate(rows):
@@ -96,11 +107,7 @@ def main() -> int:
         first, second = (r["screenwriter"], r["polisher"]) if swap else (r["polisher"], r["screenwriter"])
         prompt = f"玩家说: {r['plan'].splitlines()[0]}\n\nA: {first}\n\nB: {second}\n\n哪一段更像莫妮卡? (A/B)"
         try:
-            if args.judge == "maica":
-                out = maica_complete([{"role": "system", "content": ASK},
-                                      {"role": "user", "content": prompt}], cfg)
-            else:
-                out = llm.complete("judge", ASK, prompt, temperature=0.0, max_tokens=8)
+            out = llm.complete(args.judge, ASK, prompt, temperature=0.0, max_tokens=8)
         except Exception as exc:  # noqa: BLE001
             print(f"  ! {r['turn_id']} {str(exc)[:80]}")
             continue

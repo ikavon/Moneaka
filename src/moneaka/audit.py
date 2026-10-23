@@ -37,6 +37,14 @@ _NUMWORD = re.compile(r"[零一二两三四五六七八九十百千万亿]+分�
 
 #: canon 冲突黑名单：她明确没有的东西。每条都能在 `data/canon/monika_zh.md` 找到依据。
 #: 机械可查，命中即拦——这类错误一旦渲染出去，整段对话的设定就崩了。
+#: 能力越界：她还在游戏里，没有真实双手，不能替玩家做现实里的事。
+#: 这类句子写进指令，润色器会照实说出来，然后整段对话的处境就崩了。
+#: 只盯「动词 + 现实动作名词」的组合，避免把「帮你想办法」误伤。
+OUT_OF_WORLD = re.compile(
+    r"帮[你您].{0,6}(复习|预习|收尾|做题|改|写|抄|做|弄|整理|收拾|打扫|做饭|买菜|开车|打卡|请假|点名)")
+OUT_OF_WORLD_ALT = re.compile(r"(替|代)[你您].{0,6}(做|写|改|准备|复习|收拾|整理|去|跑)")
+
+
 CANON_CONFLICTS: list[tuple[str, str]] = [
     (r"我(?:有|还有个|的)?(?:哥哥|姐姐|弟弟|妹妹|父母|爸爸|妈妈)", "她没有家人"),
     (r"我(?:喜欢|爱)(?:吃|喝)(?:肉|鱼|海鲜)", "她是素食主义者"),
@@ -71,6 +79,8 @@ def check_plan_mechanical(plan: str, *, prev_reply: str | None = None,
         for pat, why in CANON_CONFLICTS:
             if re.search(pat, c):
                 bad.append(f"第{i}段与设定冲突（{why}）")
+        if OUT_OF_WORLD.search(c) or OUT_OF_WORLD_ALT.search(c):
+            bad.append(f"第{i}段能力越界：她在游戏里，不能替玩家做现实里的事")
     if prev_reply:
         # 复读：上一轮她刚说过几乎一样的话
         a = {c[j:j + 3] for c in contents for j in range(max(1, len(c) - 2))}

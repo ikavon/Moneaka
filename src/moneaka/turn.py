@@ -37,11 +37,13 @@ class TurnConfig:
     #: 一轮里最多花几次 B 审查（每次都是一次云调用）。不封顶的话，
     #: 「重采 4 次」会变成 4 次云端往返，交互延迟从 4 秒涨到 15 秒。
     max_audits: int = 2
-    #: 重采仍失败时是否回编剧重写 plan（一次）。关掉就退回纯直译。
-    escalate_to_plan: bool = True
-    #: 最后一道兜底由谁来出：``literal``（直译，无风格）/ ``screenwriter``（强模型直出）。
-    #: 直译保证意思，但没有一丝风格；强模型直出有风格，但会偏离专用润色器。
-    final_writer: str = "screenwriter"
+    #: 重采仍失败时的兜底：``literal`` = 标签+内容原样拼（绝对忠实、没有风格）。
+    #:
+    #: 这里**不再回编剧**（重写 plan 或直出台词）。理由：编剧的职责是「决定说什么」，
+    #: 一旦让它看到下游的失败再改，权责就乱了——它会开始迎合润色器的口味，
+    #: 而且每轮多一次不可控的云调用。要约束编剧，应该在**它输出之前**约束，
+    #: 而不是事后让它改。
+    fallback: str = "literal"
 
 
 @dataclass
@@ -81,12 +83,11 @@ class TurnResult:
     b_trigger: list[str] = field(default_factory=list)
     degraded: bool = False
     candidates: list[str] = field(default_factory=list)
-    #: 重采也救不回来 → 建议回编剧重写 plan（Q10「陪你收尾」那类就是这个原因）
-    need_new_plan: bool = False
+    #: 重采也救不回来 → 已退化为直译（仅供观测）
+    degraded_to_literal: bool = False
     timings: dict[str, float] = field(default_factory=dict)
     error: str = ""
-    escalated: bool = False
-    #: 最终这一句是谁写的：polisher / screenwriter / literal
+    #: 最终这一句是谁写的：polisher / literal
     final_source: str = "polisher"
 
     @property
@@ -135,8 +136,9 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
     盲重采能救回偶发错误，救不了**系统性**错误（同一个 plan 每次都错在同一个地方）。
     把理由写回 prompt 才是对症：和编剧那边的自修复是同一套思路。
 
-    仍然失败时置 ``res.need_new_plan``，让调用方回编剧重写指令——
-    两次都渲染不出来，说明问题在 plan，不在措辞。
+    仍然失败时退化为直译（``res.final_source = "literal"``），**不回编剧**。
+    两次都渲染不出来说明 plan 有问题，但改 plan 必须在编剧输出**之前**做，
+    不能让它看完下游结果再改（权责会乱，且多一次不可控的云调用）。
     """
     t0 = time.time()
     from .prompts import restyle_system
@@ -189,9 +191,10 @@ def _polish_stage(rt: Runtime, cfg: TurnConfig, res: TurnResult) -> None:
         res.b_verdict, res.b_note = best["b"][0].split(":", 1)[0], best["b"][0].split(":", 1)[-1].strip()
     if best["score"]:
         # 重采也救不回来 → 不是措辞问题，是 plan 让下游无法忠实表达
-        res.need_new_plan = True
+        res.degraded_to_literal = True
         res.polish = literal(res.plan)
         res.degraded = True
+        res.final_source = "literal"
     res.timings["润色+A+B"] = time.time() - t0
 
 
@@ -216,34 +219,4 @@ def run_turn(rt: Runtime, cfg: TurnConfig, user: str,
     step("润色 + 审查")
     _polish_stage(rt, cfg, res)
 
-    # 渲染两次都失败 → 回编剧重写一次。只重写一次，避免来回打转。
-    if res.need_new_plan and cfg.escalate_to_plan:
-        step("编剧重写")
-        hint = "；".join(res.a_flags + [f"{res.b_verdict} {res.b_note}".strip()]).strip()
-        user2 = user + (f"\n\n（上一条表达指令下游无法忠实表达，问题：{hint}。"
-                        f"请把它改成更好说出口的说法，尤其是谁给谁做事要写清楚。）")
-        res.need_new_plan = False
-        res.escalated = True
-        before = res.plan
-        _plan_stage(rt, cfg, user2, history, res)
-        if res.error:
-            res.plan, res.tags, res.contents = before, [], []
-            res.error = ""
-            return res
-        step("润色 + 审查")
-        _polish_stage(rt, cfg, res)
-
-    # 仍然失败 → 最后一道兜底。默认让强模型直出（有风格），可选退回直译（绝对忠实）。
-    if res.degraded and cfg.final_writer == "screenwriter":
-        step("编剧直出")
-        try:
-            text = screenwriter.render_direct(rt.llm, res.plan)
-            text, _ = normalize(text)
-            flags = [p for p in guard(res.plan, text) if p.startswith(STRICT)]
-            if not flags:
-                res.polish = text
-                res.degraded = False
-                res.final_source = "screenwriter"
-        except Exception:  # noqa: BLE001  兜底失败就保持直译
-            pass
     return res
