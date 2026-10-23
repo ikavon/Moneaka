@@ -43,8 +43,7 @@ def dump_samples(run: str, out_md: Path, n: int = 12) -> None:
         return
     rows = [json.loads(l) for l in open(f, encoding="utf-8")]
     pick = random.Random(0).sample(rows, min(n, len(rows)))
-    lines = [f"# {run} 随机 {len(pick)} 条
-"]
+    lines = [f"# {run} 随机 {len(pick)} 条\n"]
     for r in pick:
         lines.append(f"### {r['turn_id']}")
         lines.append("```")
@@ -52,8 +51,7 @@ def dump_samples(run: str, out_md: Path, n: int = 12) -> None:
         lines.append("我们: " + r["polish"])
         lines.append("真货: " + r["original"])
         lines.append("```")
-    out_md.write_text("
-".join(lines), encoding="utf-8")
+    out_md.write_text("\n".join(lines), encoding="utf-8")
     print(f"  → 样本 {out_md}")
     for r in pick[:3]:
         print(f"     {r['polish'][:60]}")
