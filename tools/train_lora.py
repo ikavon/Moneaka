@@ -144,6 +144,15 @@ def main() -> int:
         peft_config=lora, processing_class=tok,
     )
 
+    # 诊断：SFTTrainer 可能因为截断/掩码丢掉大量样本，实际每个 epoch 的步数
+    # 和脚本预估的 452 差一个数量级过（曾出现 902 条只剩 80 条生效）。
+    try:
+        kept = len(trainer.train_dataset)
+        print(f"实际参与训练的样本: {kept} / {len(train_ds)}"
+              f"（每 epoch ≈ {max(1, kept // args.accum)} 步）")
+    except Exception as exc:  # noqa: BLE001
+        print("拿不到 train_dataset 长度:", exc)
+
     print("开训…")
     res = trainer.train()
     mem = torch.cuda.max_memory_allocated() / 2**30
