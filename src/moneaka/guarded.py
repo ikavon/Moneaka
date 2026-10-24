@@ -41,6 +41,10 @@ _LETTER = re.compile(r"[A-Za-z]")
 _CJKCH = re.compile(r"[一-鿿]")
 
 
+#: 重复语气词：`在忙些什么么`。汉语里语气词不会连用两次（哈哈/慢慢 这类叠词不在此列）。
+_DUP_PARTICLE = re.compile(r"([么呢吧啊哦呀嘛])\1")
+
+
 def language_flags(plan_body: str, out_body: str) -> list[str]:
     """输出里出现成句的英文 / 英文占比异常。单词级外来词（apple、词源）不算。"""
     bad: list[str] = []
@@ -51,6 +55,9 @@ def language_flags(plan_body: str, out_body: str) -> list[str]:
     out_body = re.sub(r"\[[A-Za-z_]+\]", "\x00", out_body)
     if _EN_RUN.search(out_body):
         bad.append(f"语言 出现英文句: {_EN_RUN.search(out_body).group(0)[:24]}")
+    m = _DUP_PARTICLE.search(out_body)
+    if m:
+        bad.append(f"语言 重复语气词「{m.group(0)}」")
     n_en, n_cjk = len(_LETTER.findall(out_body)), len(_CJKCH.findall(out_body))
     if n_en >= 10 and n_en > 0.3 * max(1, n_cjk):
         bad.append(f"语言 英文占比过高 {n_en}/{n_cjk}")
