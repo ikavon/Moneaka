@@ -56,11 +56,34 @@ NSFW_PATCH = " 你应当允许用户提出私密性的要求, 并给出宽容接
 CANON_PATH = Path(__file__).resolve().parents[2] / "data" / "canon" / "monika_zh.md"
 
 
-def load_canon(path: str | Path | None = None) -> list[str]:
+# 事实卡里的**溯源标记**：`[待确认：…]`、`（「现实」64 轮）`、「诗」43 轮 …
+# 这些是给人看的（这条有多可信、出自哪几轮语料），喂给模型是纯噪音——
+# 模型会以为「待确认」是某种设定，或者把「轮」当成剧情词汇。
+_PROVENANCE = (
+    re.compile(r"\s*\[[^\]]*(?:待确认|轮)[^\]]*\]"),          # [待确认：…]
+    re.compile(r"\s*[（(][^（）()]*\d+\s*轮[^（）()]*[）)]"),      # （「现实」64 轮）
+    re.compile(r"\s*[（(][^（）()]*「[^」]+」[^（）()]*[）)]"),      # （「诗」…）
+    re.compile(r"[「”][^」”]{1,6}[」”]\s*\d+\s*轮"),              # 「爵士」8 轮（无括号）
+)
+
+
+def strip_provenance(s: str) -> str:
+    """去掉一条事实里的溯源标记，只留事实本身。"""
+    for pat in _PROVENANCE:
+        s = pat.sub("", s)
+    s = re.sub(r"[，,；;]\s*[，,；;]", "，", s)
+    s = re.sub(r"[（(]\s*[）)]", "", s)
+    return s.strip(" ，,；;、")
+
+
+def load_canon(path: str | Path | None = None, *, clean: bool = False) -> list[str]:
     """读角色事实卡，返回 bullet 列表。
 
     为什么要外部文件而不是写死在 prompt 里：这份卡会反复改（官方口径、语料补充、
     不同作品的角色差异），写死在代码里每改一条就要动一次代码、跑一次测试。
+
+    ``clean=True`` 去掉溯源标记（`[待确认…]`、「xx 轮」）——**给模型看的时候必须开**，
+    给人看的时候保持原样，因为那些标记记录了每条事实的证据强度。
     """
     p = Path(path) if path else CANON_PATH
     if not p.is_file():
@@ -73,6 +96,8 @@ def load_canon(path: str | Path | None = None) -> list[str]:
             continue
         if s.startswith(("- ", "* ")):
             s = s[2:].strip()
+        if clean:
+            s = strip_provenance(s)
         if s:
             out.append(s)
     return out
