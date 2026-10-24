@@ -29,6 +29,8 @@
 | [`STAGE3_DPO.md`](STAGE3_DPO.md) | ⛔ **DPO 无效**（三组超参、语义只在噪声内变化） |
 | [`DISTILL_PILOT.md`](DISTILL_PILOT.md) | ⛔ **教师蒸馏不划算**（同指令下 DAA4 盲评输给我们） |
 | [`STAGE_C_DATA_SIDE.md`](STAGE_C_DATA_SIDE.md) | ⛔ 改 plan 写法会让模型照抄；✅ 推理侧机械闸门有效 |
+| [`COMPARE_PROMPTS.md`](COMPARE_PROMPTS.md) | ⛔ **「格式必须靠微调」判断作废**：3 臂原始输出并列；精写提示词的标签合法率与润色器持平（各 114/115）。用户判断：润色器输出未显著优于精炼提示词直出 |
+| [`COMPARE_SIZE_4B.md`](COMPARE_SIZE_4B.md) | ⛔ **参数不是瓶颈**：同数据同超参下 4B 指令遵从更差（标签序列 84.5% vs 99.0%，抄写 0.82 vs 0.61） |
 
 ## 审查层
 
